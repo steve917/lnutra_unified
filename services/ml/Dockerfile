@@ -1,14 +1,15 @@
-FROM python:3.11-slim
+﻿FROM python:3.11-slim
 
-# Avoid Python buffering and set working directory
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-COPY pyproject.toml /app/
+COPY pyproject.toml /app/pyproject.toml
+RUN python - <<'PY'\nimport tomllib, pathlib\np = pathlib.Path('/app/pyproject.toml')\nproj = tomllib.loads(p.read_bytes()).get('project', {})\ndeps = proj.get('dependencies', [])\npathlib.Path('/app/requirements.txt').write_text('\\n'.join(deps))\nPY
+
 RUN pip install --no-cache-dir -U pip && \
-    pip install --no-cache-dir uv && \
-    uv pip install --system -r <(python -c "import tomllib, sys; print('\n'.join(__import__('tomllib').loads(open('pyproject.toml','rb').read()).get('project',{}).get('dependencies',[])))")
+    pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app /app/app
 
