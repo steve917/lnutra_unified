@@ -1,96 +1,61 @@
-﻿"""Main FastAPI application for Lâ€‘Nutra API service."""
+﻿from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import os, httpx
 
-from __future__ import annotations
+app = FastAPI(title="L-Nutra API", version="0.1.0")
 
-import hashlib
-import json
-from datetime import datetime
-from typing import Dict
-
-from fastapi import Depends, FastAPI, HTTPException, Path
-
-from .config import get_settings
-from .models import (
-    Features,
-    PredictRequest,
-    PredictionOutcomes,
-    ValidationResult,
-)
-from .utils import (
-    apply_safety_and_risk,
-    call_ml_service,
-    fetch_playbook_by_slug,
-    fetch_playbooks,
-    validate_features,
-)
-
-
-app = FastAPI(title="Lâ€‘Nutra Unified API", version="1.0.0")
-# --- CORS (MVP) ---
+# Permissive CORS for MVP (tighten later)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later to your web origin(s)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# --- end CORS ---
 
+# ---------- Models ----------
+class Features(BaseModel):
+    age_years: int
+    sex: str
+    weight_kg: float
+    bmi: float
+    hba1c: float
+    meds_diabetes: int
+    fmd_regimen_type: str
+    n_cycles: int
+    adherence_pct: int
 
-def compute_feature_checksum() -> str:
-    """Compute a stable checksum of the feature model to detect changes."""
-    # Serialise the schema definition of Features for clients to verify compatibility
-    schema = Features.model_json_schema()
-    m = hashlib.sha256()
-    m.update(json.dumps(schema, sort_keys=True).encode("utf-8"))
-    return m.hexdigest()[:8]
+class PredictRequest(BaseModel):
+    features: Features
 
+# ---------- Config ----------
+DEV_STUB = os.getenv("DEV_STUB", "true").lower() == "true"
+ML_URL = os.getenv("ML_URL", "http://localhost:9000")
 
+# ---------- Routes ----------
 @app.get("/health")
-async def health(settings=Depends(get_settings)) -> Dict[str, str]:
-    """Return basic health information for the service."""
-    return {
-        "status": "ok",
-        "timestamp": datetime.utcnow().isoformat(),
-        "feature_checksum": compute_feature_checksum(),
-        "dev_stub": str(settings.dev_stub).lower(),
-    }
+async def health():
+    return {"status": "ok", "stub": DEV_STUB, "ml_url": ML_URL}
 
+@app.post("/v1/validate")
+async def validate(req: PredictRequest):
+    # Pydantic validation already ran; just acknowledge
+    return {"ok": True}
 
-@app.post("/v1/validate", response_model=ValidationResult)
-async def post_validate(req: Dict[str, Features]) -> ValidationResult:
-    """Validate incoming features and return errors/hints."""
-    # Request body must contain a `features` key
-    if "features" not in req:
-        raise HTTPException(status_code=400, detail="Missing 'features' in request body")
-    features_obj = Features.parse_obj(req["features"])
-    ok, errors, hints = await validate_features(features_obj)
-    return ValidationResult(ok=ok, errors=errors, hints=hints)
-
-
-@app.post("/v1/predict", response_model=PredictionOutcomes)
-async def post_predict(body: PredictRequest) -> PredictionOutcomes:
-    """Perform prediction after validating input features."""
-    ok, errors, hints = await validate_features(body.features)
-    if not ok:
-        raise HTTPException(status_code=400, detail={"errors": errors, "hints": hints})
-    raw = await call_ml_service(body.features)
-    return apply_safety_and_risk(body.features, raw)
-
-
-@app.get("/v1/playbooks")
-async def get_playbooks() -> list:
-    """Retrieve all playbooks from Supabase via proxy."""
-    return await fetch_playbooks()
-
-
-@app.get("/v1/playbooks/{slug}")
-async def get_playbook(slug: str = Path(..., description="Slug of the playbook")) -> Dict:
-    """Retrieve a single playbook by its slug."""
-    playbook = await fetch_playbook_by_slug(slug)
-    if not playbook:
-        raise HTTPException(status_code=404, detail="Playbook not found")
-    return playbook`r`nfrom fastapi.middleware.cors import CORSMiddleware
-
-# MVP CORS: allow everything (tighten later)
-
+@app.post("/v1/predict")
+async def predict(req: PredictRequest):
+    if DEV_STUB:
+        n = req.features.n_cycles
+        return {
+            "predicted_weight_change_kg": round(-0.7 * n, 2),
+            "predicted_hba1c_change_pct": round(-0.2 * n, 2),
+            "safety_badge": "green",
+            "source": "stub"
+        }
+    # Forward to ML service
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(f"{ML_URL}/v1/predict", json=req.model_dump())
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+        return r.json()
