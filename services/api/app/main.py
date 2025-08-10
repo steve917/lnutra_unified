@@ -1,4 +1,4 @@
-"""Main FastAPI application for L‑Nutra API service."""
+﻿"""Main FastAPI application for Lâ€‘Nutra API service."""
 
 from __future__ import annotations
 
@@ -25,7 +25,16 @@ from .utils import (
 )
 
 
-app = FastAPI(title="L‑Nutra Unified API", version="1.0.0")
+app = FastAPI(title="Lâ€‘Nutra Unified API", version="1.0.0")
+# --- CORS (MVP) ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten later to your web origin(s)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+# --- end CORS ---
 
 
 def compute_feature_checksum() -> str:
@@ -81,13 +90,7 @@ async def get_playbook(slug: str = Path(..., description="Slug of the playbook")
     playbook = await fetch_playbook_by_slug(slug)
     if not playbook:
         raise HTTPException(status_code=404, detail="Playbook not found")
-    return playbookfrom fastapi.middleware.cors import CORSMiddleware
+    return playbook`r`nfrom fastapi.middleware.cors import CORSMiddleware
 
 # MVP CORS: allow everything (tighten later)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
