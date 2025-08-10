@@ -1,0 +1,16 @@
+[project]
+name = "lnutra-ml"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.111",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.7",
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "scikit-learn>=1.5",
+  "joblib>=1.4"
+]
+
+[tool.uvicorn]
+factory = true

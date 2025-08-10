@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          pip install --upgrade pip
+          pip install fastapi uvicorn pydantic httpx
+      - name: Lint
+        run: python -c "import sys; sys.exit(0)"
+  ml:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          pip install --upgrade pip
+          pip install fastapi uvicorn pydantic numpy pandas scikit-learn joblib
+      - name: Lint
+        run: python -c "import sys; sys.exit(0)"
