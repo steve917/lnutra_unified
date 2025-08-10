@@ -3,7 +3,7 @@
     name: ln-api
     env: docker
     rootDir: services/api
-    dockerfilePath: services/api/Dockerfile
+    dockerfilePath: Dockerfile
     plan: starter
     autoDeploy: true
     envVars:
@@ -32,7 +32,7 @@
     name: ln-ml
     env: docker
     rootDir: services/ml
-    dockerfilePath: services/ml/Dockerfile
+    dockerfilePath: Dockerfile
     plan: starter
     autoDeploy: true
     envVars:
