@@ -81,4 +81,13 @@ async def get_playbook(slug: str = Path(..., description="Slug of the playbook")
     playbook = await fetch_playbook_by_slug(slug)
     if not playbook:
         raise HTTPException(status_code=404, detail="Playbook not found")
-    return playbook
+    return playbookfrom fastapi.middleware.cors import CORSMiddleware
+
+# MVP CORS: allow everything (tighten later)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
