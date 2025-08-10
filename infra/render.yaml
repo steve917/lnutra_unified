@@ -1,22 +1,5 @@
 ﻿services:
   - type: web
-    name: ln-ml
-    env: docker
-    rootDir: services/ml
-    dockerfilePath: services/ml/Dockerfile
-    plan: starter
-    autoDeploy: true
-    envVars:
-      - key: DEV_STUB
-        value: "true"
-      - key: GLY_MODEL
-        value: ""
-      - key: ANTH_MODEL
-        value: ""
-      - key: PREPROC
-        value: ""
-
-  - type: web
     name: ln-api
     env: docker
     rootDir: services/api
@@ -24,10 +7,10 @@
     plan: starter
     autoDeploy: true
     envVars:
-      - key: ML_URL
-        value: https://ln-ml.onrender.com
       - key: DEV_STUB
         value: "true"
+      - key: ML_URL
+        value: https://ln-ml.onrender.com
       - key: MAX_WL_CYCLE_KG
         value: "3.0"
       - key: MIN_PROJECTED_BMI
@@ -36,11 +19,30 @@
         value: "1.5"
       - key: HBA1C_DROP_PER_CYCLE_AMBER
         value: "1.0"
+      - key: SUPABASE_URL
+        value: ""
+      - key: SUPABASE_API_KEY
+        value: ""
       - key: DATABASE_URL
         fromDatabase:
           name: ln-db
           property: connectionString
 
+  - type: web
+    name: ln-ml
+    env: docker
+    rootDir: services/ml
+    dockerfilePath: services/ml/Dockerfile
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: GLY_MODEL
+        value: ""
+      - key: ANTH_MODEL
+        value: ""
+      - key: PREPROC
+        value: ""
+
 databases:
   - name: ln-db
-    plan: basic-256mb
+    plan: free

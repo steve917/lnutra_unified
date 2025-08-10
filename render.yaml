@@ -1,4 +1,4 @@
-services:
+﻿services:
   - type: web
     name: ln-api
     env: docker
@@ -27,6 +27,7 @@ services:
         fromDatabase:
           name: ln-db
           property: connectionString
+
   - type: web
     name: ln-ml
     env: docker
@@ -41,6 +42,7 @@ services:
         value: ""
       - key: PREPROC
         value: ""
+
 databases:
   - name: ln-db
-    plan: starter
+    plan: free
