@@ -1,32 +1,4 @@
-services:
-  - type: web
-    name: ln-api
-    env: docker
-    rootDir: services/api
-    dockerfilePath: services/api/Dockerfile
-    plan: starter
-    autoDeploy: true
-    envVars:
-      - key: DEV_STUB
-        value: "true"
-      - key: ML_URL
-        value: https://ln-ml.onrender.com
-      - key: MAX_WL_CYCLE_KG
-        value: "3.0"
-      - key: MIN_PROJECTED_BMI
-        value: "18.5"
-      - key: HBA1C_DROP_PER_CYCLE_HIGH
-        value: "1.5"
-      - key: HBA1C_DROP_PER_CYCLE_AMBER
-        value: "1.0"
-      - key: SUPABASE_URL
-        value: ""
-      - key: SUPABASE_API_KEY
-        value: ""
-      - key: DATABASE_URL
-        fromDatabase:
-          name: ln-db
-          property: connectionString
+﻿services:
   - type: web
     name: ln-ml
     env: docker
@@ -35,12 +7,40 @@ services:
     plan: starter
     autoDeploy: true
     envVars:
+      - key: DEV_STUB
+        value: "true"
       - key: GLY_MODEL
         value: ""
       - key: ANTH_MODEL
         value: ""
       - key: PREPROC
         value: ""
+
+  - type: web
+    name: ln-api
+    env: docker
+    rootDir: services/api
+    dockerfilePath: services/api/Dockerfile
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: ML_URL
+        value: https://ln-ml.onrender.com
+      - key: DEV_STUB
+        value: "true"
+      - key: MAX_WL_CYCLE_KG
+        value: "3.0"
+      - key: MIN_PROJECTED_BMI
+        value: "18.5"
+      - key: HBA1C_DROP_PER_CYCLE_HIGH
+        value: "1.5"
+      - key: HBA1C_DROP_PER_CYCLE_AMBER
+        value: "1.0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ln-db
+          property: connectionString
+
 databases:
   - name: ln-db
     plan: starter
