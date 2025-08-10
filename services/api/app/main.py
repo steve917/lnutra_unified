@@ -1,11 +1,12 @@
 ﻿from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 import os, httpx
 
-app = FastAPI(title="L-Nutra API", version="0.1.2")
+app = FastAPI(title="L-Nutra API", version="0.1.3")
 
-# Permissive CORS for MVP (tighten later)
+# CORS (MVP)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,8 +27,18 @@ class Features(BaseModel):
     n_cycles: int
     adherence_pct: int
 
-class PredictRequest(BaseModel):
-    features: Features
+# accepts either {features:{...}} OR raw top-level fields
+class PredictFlexible(BaseModel):
+    features: Optional[Features] = None
+    age_years: Optional[int] = None
+    sex: Optional[str] = None
+    weight_kg: Optional[float] = None
+    bmi: Optional[float] = None
+    hba1c: Optional[float] = None
+    meds_diabetes: Optional[int] = None
+    fmd_regimen_type: Optional[str] = None
+    n_cycles: Optional[int] = None
+    adherence_pct: Optional[int] = None
 
 # ---------- Config ----------
 DEV_STUB = os.getenv("DEV_STUB", "true").lower() == "true"
@@ -44,12 +55,11 @@ async def health():
 
 @app.post("/v1/validate")
 @app.post("/validate")
-async def validate(_: PredictRequest):
+async def validate(_: PredictFlexible):
     return {"ok": True}
 
 # ---------- Helpers ----------
 def _superset(weight: float, hba1c: float, badge: str = "green", **extra):
-    # flat aliases
     base = {
         "weight": weight,
         "hba1c": hba1c,
@@ -61,9 +71,7 @@ def _superset(weight: float, hba1c: float, badge: str = "green", **extra):
         "predicted_hba1c_change_pct": hba1c,
     }
     base.update(extra or {})
-    # nested recommendation object
     rec = {"weight": weight, "hba1c": hba1c, "badge": badge}
-    # add multiple wrappers some UIs expect
     base["recommendation"] = rec
     base["result"] = {"recommendation": rec}
     base["data"] = {"recommendation": rec}
@@ -73,24 +81,42 @@ def _normalize_model_response(d: dict):
     w = d.get("weight") or d.get("predicted_weight_change") or d.get("predicted_weight_change_kg")
     h = d.get("hba1c") or d.get("predicted_hba1c_change") or d.get("predicted_hba1c_change_pct")
     b = d.get("safetyBadge") or d.get("safety_badge") or "green"
-    # pass through other keys as well
-    passthrough = {k:v for k,v in d.items() if k not in {"weight","hba1c","predicted_weight_change",
-                                                         "predicted_weight_change_kg","predicted_hba1c_change",
-                                                         "predicted_hba1c_change_pct","safetyBadge","safety_badge"}}
+    passthrough = {k:v for k,v in d.items() if k not in {
+      "weight","hba1c","predicted_weight_change","predicted_weight_change_kg",
+      "predicted_hba1c_change","predicted_hba1c_change_pct","safetyBadge","safety_badge"
+    }}
     return _superset(w, h, b, **passthrough)
+
+def _to_features(req: PredictFlexible) -> Features:
+    if req.features:
+        return req.features
+    # fallback: build from top-level fields (defaulting safely)
+    return Features(
+        age_years = int(req.age_years or 0),
+        sex = (req.sex or "M"),
+        weight_kg = float(req.weight_kg or 0),
+        bmi = float(req.bmi or 0),
+        hba1c = float(req.hba1c or 0),
+        meds_diabetes = int(req.meds_diabetes or 0),
+        fmd_regimen_type = (req.fmd_regimen_type or "standard_fmd"),
+        n_cycles = int(req.n_cycles or 0),
+        adherence_pct = int(req.adherence_pct or 0),
+    )
 
 # ---------- Predict ----------
 @app.post("/v1/predict")
 @app.post("/predict")
-async def predict(req: PredictRequest):
-    n = req.features.n_cycles
+async def predict(req: PredictFlexible):
+    f = _to_features(req)
+    n = f.n_cycles
+
     if DEV_STUB:
         weight_delta = round(-0.7 * n, 2)
         hba1c_delta  = round(-0.2 * n, 2)
         return _superset(weight_delta, hba1c_delta, "green", source="stub", confidence=0.7)
 
     async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(f"{ML_URL}/v1/predict", json=req.model_dump())
+        r = await client.post(f"{ML_URL}/v1/predict", json={"features": f.model_dump()})
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=r.text)
         return _normalize_model_response(r.json())
