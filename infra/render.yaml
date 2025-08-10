@@ -43,4 +43,4 @@
 
 databases:
   - name: ln-db
-    plan: starter
+    plan: basic-256mb
