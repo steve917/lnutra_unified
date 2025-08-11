@@ -36,7 +36,12 @@ const OpsPage: React.FC = () => {
         return;
       }
       const base = apiBase.replace(/\/+$/, "");
-      const candidates = ["/v1/predictions", "/predictions"]; // try v1 then fallback
+      const candidates = [
+        "/v1/predictions",
+        "/v1/predictions/",
+        "/predictions",
+        "/predictions/",
+      ];
 
       for (const path of candidates) {
         const url = `${base}${path}?limit=50`;
@@ -46,10 +51,7 @@ const OpsPage: React.FC = () => {
           const text = await r.text();
           console.log("[OPS] status:", r.status, "body:", text);
           if (!r.ok) {
-            if (r.status === 404) {
-              // try next candidate
-              continue;
-            }
+            if (r.status === 404) continue; // try next candidate
             throw new Error(`HTTP ${r.status} — ${text}`);
           }
           const data = JSON.parse(text);
@@ -61,12 +63,14 @@ const OpsPage: React.FC = () => {
           return;
         } catch (e: any) {
           console.error("[OPS] fetch error:", e);
-          // try next candidate on 404, otherwise bubble
+          // if not 404 the loop continues only if the next candidate might succeed
         }
       }
 
       if (!cancelled) {
-        setErr("No predictions endpoint found (tried /v1/predictions and /predictions).");
+        setErr(
+          "No predictions endpoint found (tried /v1/predictions, /v1/predictions/, /predictions, /predictions/)."
+        );
         setRows([]);
         setUsingPath("(not found)");
       }
