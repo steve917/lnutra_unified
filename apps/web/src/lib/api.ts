@@ -11,7 +11,6 @@ const BASE_URL = `${RAW_BASE}/v1`;
 const BASIC = import.meta.env.VITE_API_BASIC as string | undefined;
 const headers: Record<string, string> = {};
 if (BASIC) {
-  // btoa is available in the browser build
   headers["Authorization"] = `Basic ${btoa(BASIC)}`;
 }
 
@@ -21,13 +20,11 @@ const api = axios.create({
   timeout: 15000,
 });
 
-// Convenience functions (used by Predictor page)
 export async function fetchFeatureColumns(): Promise<string[]> {
   const res = await api.get("/features");
-  // Backend returns either { columns: [...] } or just [...]
   if (Array.isArray(res.data)) return res.data as string[];
   if (Array.isArray(res.data?.columns)) return res.data.columns as string[];
-  return []; // fallback
+  return [];
 }
 
 export async function fetchPredictions(limit: number) {
