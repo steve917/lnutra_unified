@@ -1,7 +1,8 @@
-﻿from fastapi import FastAPI, HTTPException, Request, Query
+﻿from fastapi import FastAPI, HTTPException, Request, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional
 import os, httpx
 
 # --- DB (inlined to avoid import issues) ---
@@ -41,10 +42,8 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-# --- FastAPI app ---
-app = FastAPI(title="L-Nutra API", version="0.3.0")
+app = FastAPI(title="L-Nutra API", version="0.4.0")
 
-# CORS (prod: your web + localhost)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://lnutra-unified.onrender.com","http://localhost:5173"],
@@ -53,6 +52,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---- Basic Auth for ops endpoints ----
+security = HTTPBasic()
+OPS_USER = os.getenv("OPS_USER") or ""
+OPS_PASS = os.getenv("OPS_PASS") or ""
+
+def require_ops(credentials: HTTPBasicCredentials = Depends(security)) -> bool:
+    # If no creds are set on the server, allow access (useful for dev).
+    if not OPS_USER and not OPS_PASS:
+        return True
+    is_ok = (credentials.username == OPS_USER and credentials.password == OPS_PASS)
+    if not is_ok:
+        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate":"Basic"})
+    return True
+
+# ---- Schemas ----
 class Features(BaseModel):
     age_years: int
     sex: str
@@ -118,15 +132,15 @@ def _to_features(req: PredictFlexible) -> Features:
     if req.features:
         return req.features
     return Features(
-        age_years = int(req.age_years or 0),
-        sex = (req.sex or "M"),
-        weight_kg = float(req.weight_kg or 0),
-        bmi = float(req.bmi or 0),
-        hba1c = float(req.hba1c or 0),
-        meds_diabetes = int(req.meds_diabetes or 0),
-        fmd_regimen_type = (req.fmd_regimen_type or "standard_fmd"),
-        n_cycles = int(req.n_cycles or 0),
-        adherence_pct = int(req.adherence_pct or 0),
+        age_years=int(req.age_years or 0),
+        sex=(req.sex or "M"),
+        weight_kg=float(req.weight_kg or 0),
+        bmi=float(req.bmi or 0),
+        hba1c=float(req.hba1c or 0),
+        meds_diabetes=int(req.meds_diabetes or 0),
+        fmd_regimen_type=(req.fmd_regimen_type or "standard_fmd"),
+        n_cycles=int(req.n_cycles or 0),
+        adherence_pct=int(req.adherence_pct or 0),
     )
 
 @app.post("/v1/predict")
@@ -163,7 +177,7 @@ async def predict(req: PredictFlexible, request: Request):
     return result
 
 @app.get("/v1/predictions")
-async def list_predictions(limit: int = Query(50, ge=1, le=500)):
+async def list_predictions(limit: int = Query(50, ge=1, le=500), _: bool = Depends(require_ops)):
     async with SessionLocal() as session:
         rows = (await session.execute(
             select(Prediction).order_by(desc(Prediction.created_at)).limit(limit)
