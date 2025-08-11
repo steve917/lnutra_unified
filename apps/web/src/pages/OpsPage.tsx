@@ -1,242 +1,195 @@
-﻿// apps/web/src/pages/OpsPage.tsx
-import React, { useEffect, useMemo, useState } from "react";
-import api, { apiBase, hasBasicAuth, getFeatureColumns, getPredictions, PredictOut } from "../lib/api";
-
-type Row = PredictOut;
-
-function badgeClass(b: Row["safety_badge"]) {
-  switch (b) {
-    case "green":
-      return { color: "#0a0", label: "Green" };
-    case "yellow":
-      return { color: "#c9a400", label: "Yellow" };
-    case "red":
-      return { color: "#c00", label: "Red" };
-    default:
-      return { color: "#666", label: String(b) };
-  }
-}
-
-function toUTC(ts: string) {
-  try {
-    return new Date(ts).toISOString().replace("T", " ").replace("Z", "");
-  } catch {
-    return ts;
-  }
-}
-
-function toCSV(rows: Row[]): string {
-  const headers = [
-    "created_at_utc",
-    "badge",
-    "delta_weight_kg",
-    "delta_hba1c_pct",
-    "features_json",
-  ];
-  const lines = rows.map((r) =>
-    [
-      toUTC(r.created_at),
-      r.safety_badge,
-      r.delta_weight_kg,
-      r.delta_hba1c_pct,
-      JSON.stringify(r.features),
-    ]
-      .map((v) => `"${String(v).replace(/"/g, '""')}"`)
-      .join(",")
-  );
-  return [headers.join(","), ...lines].join("\n");
-}
+﻿import React, { useEffect, useMemo, useState } from "react";
+import {
+  apiBase,
+  hasBasicAuth,
+  getFeatureColumns,
+  getPredictions,
+  resolvePredictionsPath,
+  type PredictionRow,
+} from "../lib/api";
 
 export default function OpsPage() {
-  const [features, setFeatures] = useState<string[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
+  const [features, setFeatures] = useState<string[]>([]);
+  const [predictions, setPredictions] = useState<PredictionRow[]>([]);
   const [limit, setLimit] = useState<number>(50);
-  const [rows, setRows] = useState<Row[] | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [predPath, setPredPath] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
+  // Load features and detect predictions list endpoint (if any)
   useEffect(() => {
+    let mounted = true;
     (async () => {
       try {
         const cols = await getFeatureColumns();
+        if (!mounted) return;
         setFeatures(cols);
       } catch (e: any) {
-        setFeatures([]);
-        setErr(`Failed to load feature columns. ${e?.message ?? e}`);
+        if (!mounted) return;
+        setError(
+          `Failed to load features. ${e?.message ?? "Unexpected error."}`
+        );
+      }
+
+      try {
+        const path = await resolvePredictionsPath();
+        if (!mounted) return;
+        setPredPath(path);
+      } catch {
+        // ignore; predPath stays null
       }
     })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
+  // Load predictions only if a list endpoint exists
   useEffect(() => {
+    let mounted = true;
     (async () => {
-      setLoading(true);
-      setErr(null);
+      if (!predPath) return; // no list endpoint on the backend
       try {
-        const data = await getPredictions(limit);
-        setRows(data);
+        const rows = await getPredictions(limit);
+        if (!mounted) return;
+        setPredictions(rows);
+        setError(null);
       } catch (e: any) {
-        setRows([]);
-        setErr(`Failed to load predictions. ${e?.message ?? e}`);
-      } finally {
-        setLoading(false);
+        if (!mounted) return;
+        setError(
+          `Failed to load predictions. ${e?.response?.status ?? ""} ${
+            e?.message ?? ""
+          }`.trim()
+        );
       }
     })();
-  }, [limit]);
+    return () => {
+      mounted = false;
+    };
+  }, [predPath, limit]);
 
-  const csvBlobUrl = useMemo(() => {
-    if (!rows?.length) return null;
-    const blob = new Blob([toCSV(rows)], { type: "text/csv;charset=utf-8" });
-    return URL.createObjectURL(blob);
-  }, [rows]);
+  const rows = useMemo(() => predictions ?? [], [predictions]);
 
   return (
-    <div style={{ padding: "1.25rem" }}>
-      <h1 style={{ marginTop: 0 }}>Ops</h1>
+    <div style={{ padding: 16 }}>
+      <h1>Ops</h1>
+      <p style={{ fontSize: 12, color: "#444" }}>
+        <strong>API_BASE:</strong> {apiBase} | <strong>Has Basic:</strong>{" "}
+        {hasBasicAuth ? "yes" : "no"}{" "}
+        {predPath ? (
+          <>
+            | <strong>Using predictions path:</strong> {predPath}
+          </>
+        ) : (
+          <>| <strong>Using path:</strong> (not found)</>
+        )}
+      </p>
 
-      <div style={{ marginBottom: 12, color: "#555" }}>
-        <b>API_BASE:</b> {apiBase || "(missing)"} &nbsp;|&nbsp; <b>Has Basic:</b>{" "}
-        {hasBasicAuth ? "yes" : "no"}
-      </div>
-
-      {err && (
+      {/* Banner when there is an error */}
+      {error && (
         <div
           style={{
-            background: "#fde8e8",
-            border: "1px solid #f5b5b5",
-            color: "#8a1f1f",
+            background: "#fdecea",
+            border: "1px solid #f5c2c0",
+            color: "#7f1d1d",
             padding: "10px 12px",
             borderRadius: 6,
             marginBottom: 12,
           }}
         >
-          {err}
+          {predPath
+            ? error
+            : "No predictions endpoint found (tried /v1/predictions and /predictions)."}
         </div>
       )}
 
-      {/* Feature columns */}
-      <section style={{ marginBottom: 28 }}>
-        <h3 style={{ margin: "16px 0 8px" }}>Feature columns</h3>
-        {!features && <div>Loading…</div>}
-        {features && (
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              border: "1px solid #eee",
-            }}
-          >
-            <thead>
-              <tr style={{ background: "#fafafa" }}>
-                <th style={{ textAlign: "left", padding: "10px" }}>#</th>
-                <th style={{ textAlign: "left", padding: "10px" }}>
-                  Feature name
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {features.map((f, i) => (
-                <tr key={f} style={{ borderTop: "1px solid #f2f2f2" }}>
-                  <td style={{ padding: "10px" }}>{i + 1}</td>
-                  <td style={{ padding: "10px" }}>{f}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+      <h3>Feature columns</h3>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={th}>#</th>
+            <th style={th}>Feature name</th>
+          </tr>
+        </thead>
+        <tbody>
+          {features.map((f, i) => (
+            <tr key={f}>
+              <td style={td}>{i + 1}</td>
+              <td style={td}>{f}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
-      {/* Predictions */}
-      <section>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <h3 style={{ margin: "16px 0 8px" }}>Latest predictions</h3>
-          <label style={{ fontSize: 14 }}>
-            Rows:&nbsp;
-            <select
-              value={limit}
-              onChange={(e) => setLimit(Number(e.target.value))}
-            >
-              {[10, 25, 50, 100, 200, 500].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-          {csvBlobUrl && (
-            <a
-              href={csvBlobUrl}
-              download={`predictions_${limit}.csv`}
-              style={{
-                fontSize: 14,
-                padding: "6px 10px",
-                border: "1px solid #ddd",
-                borderRadius: 6,
-                textDecoration: "none",
-              }}
-            >
-              Download CSV
-            </a>
+      <div style={{ height: 24 }} />
+
+      <h3>Latest predictions</h3>
+      <div style={{ marginBottom: 8 }}>
+        <label>
+          Rows:{" "}
+          <select
+            value={limit}
+            onChange={(e) => setLimit(Number(e.target.value))}
+          >
+            {[10, 25, 50, 100].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={th}>Time (UTC)</th>
+            <th style={th}>Badge</th>
+            <th style={th}>Δ Weight (kg)</th>
+            <th style={th}>Δ HbA1c (%)</th>
+            <th style={th}>Features (summary)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td style={td} colSpan={5}>
+                {predPath
+                  ? "No rows."
+                  : "Predictions list endpoint not available on the backend."}
+              </td>
+            </tr>
+          ) : (
+            rows.map((r, i) => (
+              <tr key={i}>
+                <td style={td}>{r.created_at}</td>
+                <td style={td}>{r.badge}</td>
+                <td style={td}>{r.delta_weight_kg}</td>
+                <td style={td}>{r.delta_hba1c_pct}</td>
+                <td style={td}>
+                  {summarizeFeatures(r.features as Record<string, unknown>)}
+                </td>
+              </tr>
+            ))
           )}
-        </div>
-
-        {loading && <div>Loading predictions…</div>}
-        {!loading && rows && (
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              border: "1px solid #eee",
-            }}
-          >
-            <thead>
-              <tr style={{ background: "#fafafa" }}>
-                <th style={{ textAlign: "left", padding: "10px" }}>Time (UTC)</th>
-                <th style={{ textAlign: "left", padding: "10px" }}>Badge</th>
-                <th style={{ textAlign: "left", padding: "10px" }}>
-                  Δ Weight (kg)
-                </th>
-                <th style={{ textAlign: "left", padding: "10px" }}>
-                  Δ HbA1c (%)
-                </th>
-                <th style={{ textAlign: "left", padding: "10px" }}>
-                  Features (summary)
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const badge = badgeClass(r.safety_badge);
-                const summary = Object.entries(r.features || {})
-                  .slice(0, 5)
-                  .map(([k, v]) => `${k}: ${v}`)
-                  .join(", ");
-                return (
-                  <tr key={r.id} style={{ borderTop: "1px solid #f2f2f2" }}>
-                    <td style={{ padding: "10px" }}>{toUTC(r.created_at)}</td>
-                    <td style={{ padding: "10px" }}>
-                      <span
-                        style={{
-                          display: "inline-block",
-                          background: badge.color,
-                          color: "#fff",
-                          padding: "2px 8px",
-                          borderRadius: 999,
-                          fontSize: 12,
-                        }}
-                      >
-                        {badge.label}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px" }}>{r.delta_weight_kg}</td>
-                    <td style={{ padding: "10px" }}>{r.delta_hba1c_pct}</td>
-                    <td style={{ padding: "10px" }}>{summary}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </section>
+        </tbody>
+      </table>
     </div>
   );
+}
+
+const th: React.CSSProperties = {
+  textAlign: "left",
+  borderBottom: "1px solid #ddd",
+  padding: "8px 6px",
+  background: "#fafafa",
+};
+
+const td: React.CSSProperties = {
+  borderBottom: "1px solid #eee",
+  padding: "8px 6px",
+};
+
+function summarizeFeatures(feats: Record<string, unknown>) {
+  const keys = Object.keys(feats ?? {}).slice(0, 4);
+  return keys.map((k) => `${k}: ${String(feats[k])}`).join(", ") + (keys.length >= 4 ? " ..." : "");
 }
