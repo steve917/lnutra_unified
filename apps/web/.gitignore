@@ -1,0 +1,11 @@
+﻿# build artifacts
+dist/
+.vite/
+
+# dependencies
+node_modules/
+
+# local stuff
+.env
+.DS_Store
+.vscode/
