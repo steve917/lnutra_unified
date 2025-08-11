@@ -3,7 +3,7 @@
     name: ln-api
     env: docker
     rootDir: services/api
-    dockerfilePath: Dockerfile
+    dockerfilePath: services/api/Dockerfile
     plan: starter
     autoDeploy: true
     envVars:
@@ -32,7 +32,7 @@
     name: ln-ml
     env: docker
     rootDir: services/ml
-    dockerfilePath: Dockerfile
+    dockerfilePath: services/ml/Dockerfile
     plan: starter
     autoDeploy: true
     envVars:
@@ -42,6 +42,15 @@
         value: ""
       - key: PREPROC
         value: ""
+
+  - type: static
+    name: ln-web
+    rootDir: apps/web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE
+        value: https://ln-api-rgxr.onrender.com
 
 databases:
   - name: ln-db
