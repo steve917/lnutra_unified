@@ -43,13 +43,20 @@
       - key: PREPROC
         value: ""
 
-  # Frontend (STATIC SITE)
+  # NEW: Static site (frontend). New name so Render detects it.
   - type: web
-    name: ln-web
+    name: ln-web-ui
     env: static
     rootDir: apps/web
     buildCommand: npm ci && npm run build
+    # Either key works depending on Render version; include both for safety.
+    publishPath: dist
     staticPublishPath: dist
+    # SPA safe rewrites (Vite)
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
     envVars:
       - key: VITE_API_BASE
         value: https://ln-api-rgxr.onrender.com
