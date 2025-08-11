@@ -9,7 +9,7 @@ app = FastAPI(title="L-Nutra API", version="0.1.3")
 # CORS (MVP)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://<YOUR-LN-WEB-DOMAIN>.onrender.com","http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
