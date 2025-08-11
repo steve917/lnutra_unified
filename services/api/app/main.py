@@ -1,12 +1,14 @@
-﻿from fastapi import FastAPI, HTTPException
+﻿from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import os, httpx
 
-app = FastAPI(title="L-Nutra API", version="0.1.3")
+from .db import SessionLocal, init_db
+from .models import Prediction
 
-# CORS (MVP)
+app = FastAPI(title="L-Nutra API", version="0.2.0")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://lnutra-unified.onrender.com","http://localhost:5173"],
@@ -15,7 +17,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- Models ----------
 class Features(BaseModel):
     age_years: int
     sex: str
@@ -27,7 +28,6 @@ class Features(BaseModel):
     n_cycles: int
     adherence_pct: int
 
-# accepts either {features:{...}} OR raw top-level fields
 class PredictFlexible(BaseModel):
     features: Optional[Features] = None
     age_years: Optional[int] = None
@@ -40,11 +40,13 @@ class PredictFlexible(BaseModel):
     n_cycles: Optional[int] = None
     adherence_pct: Optional[int] = None
 
-# ---------- Config ----------
 DEV_STUB = os.getenv("DEV_STUB", "true").lower() == "true"
 ML_URL = os.getenv("ML_URL", "http://localhost:9000")
 
-# ---------- Basic routes ----------
+@app.on_event("startup")
+async def _startup():
+    await init_db()
+
 @app.get("/")
 async def root():
     return {"service": "api", "ok": True}
@@ -58,7 +60,6 @@ async def health():
 async def validate(_: PredictFlexible):
     return {"ok": True}
 
-# ---------- Helpers ----------
 def _superset(weight: float, hba1c: float, badge: str = "green", **extra):
     base = {
         "weight": weight,
@@ -77,20 +78,9 @@ def _superset(weight: float, hba1c: float, badge: str = "green", **extra):
     base["data"] = {"recommendation": rec}
     return base
 
-def _normalize_model_response(d: dict):
-    w = d.get("weight") or d.get("predicted_weight_change") or d.get("predicted_weight_change_kg")
-    h = d.get("hba1c") or d.get("predicted_hba1c_change") or d.get("predicted_hba1c_change_pct")
-    b = d.get("safetyBadge") or d.get("safety_badge") or "green"
-    passthrough = {k:v for k,v in d.items() if k not in {
-      "weight","hba1c","predicted_weight_change","predicted_weight_change_kg",
-      "predicted_hba1c_change","predicted_hba1c_change_pct","safetyBadge","safety_badge"
-    }}
-    return _superset(w, h, b, **passthrough)
-
 def _to_features(req: PredictFlexible) -> Features:
     if req.features:
         return req.features
-    # fallback: build from top-level fields (defaulting safely)
     return Features(
         age_years = int(req.age_years or 0),
         sex = (req.sex or "M"),
@@ -103,25 +93,60 @@ def _to_features(req: PredictFlexible) -> Features:
         adherence_pct = int(req.adherence_pct or 0),
     )
 
-# ---------- Predict ----------
 @app.post("/v1/predict")
 @app.post("/predict")
-async def predict(req: PredictFlexible):
+async def predict(req: PredictFlexible, request: Request):
     f = _to_features(req)
     n = f.n_cycles
-
     if DEV_STUB:
         weight_delta = round(-0.7 * n, 2)
         hba1c_delta  = round(-0.2 * n, 2)
-        return _superset(weight_delta, hba1c_delta, "green", source="stub", confidence=0.7)
+        result = _superset(weight_delta, hba1c_delta, "green", source="stub", confidence=0.7)
+    else:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(f"{ML_URL}/v1/predict", json={"features": f.model_dump()})
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=r.text)
+            data = r.json()
+        w = data.get("weight") or data.get("predicted_weight_change") or data.get("predicted_weight_change_kg")
+        h = data.get("hba1c") or data.get("predicted_hba1c_change") or data.get("predicted_hba1c_change_pct")
+        badge = data.get("safetyBadge") or data.get("safety_badge") or "green"
+        result = _superset(w, h, badge, **{k:v for k,v in data.items() if k not in ("weight","hba1c")})
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(f"{ML_URL}/v1/predict", json={"features": f.model_dump()})
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return _normalize_model_response(r.json())
+    # Save to DB
+    client_ip = request.headers.get("x-forwarded-for") or request.client.host
+    ua = request.headers.get("user-agent")
+    from sqlalchemy import insert
+    async with SessionLocal() as session:
+        await session.execute(insert(Prediction).values(
+            client_ip=client_ip, user_agent=ua,
+            features=f.model_dump(), result=result,
+            weight_delta_kg=result.get("weight"),
+            hba1c_delta_pct=result.get("hba1c"),
+            safety_badge=result.get("safety_badge") or result.get("safetyBadge")
+        ))
+        await session.commit()
+    return result
 
-# ---------- Playbooks stubs ----------
+@app.get("/v1/predictions")
+async def list_predictions(limit: int = Query(50, ge=1, le=500)):
+    from sqlalchemy import select, desc
+    async with SessionLocal() as session:
+        rows = (await session.execute(
+            select(Prediction).order_by(desc(Prediction.created_at)).limit(limit)
+        )).scalars().all()
+    return [
+      {
+        "id": r.id,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "client_ip": r.client_ip,
+        "safety_badge": r.safety_badge,
+        "weight": r.weight_delta_kg,
+        "hba1c": r.hba1c_delta_pct,
+        "features": r.features,
+      } for r in rows
+    ]
+
 @app.get("/v1/playbooks")
 async def list_playbooks():
     return []
@@ -129,5 +154,3 @@ async def list_playbooks():
 @app.get("/v1/playbooks/{playbook_id}")
 async def get_playbook(playbook_id: str):
     return {"id": playbook_id, "title": "Unavailable", "steps": []}
-
-# redeploy-2025-08-10T19:03:08.0428121-07:00
