@@ -1,35 +1,24 @@
+// apps/web/src/lib/api.ts
 import axios from "axios";
 
-/**
- * Builds a base URL like:
- *   https://ln-api-rgxr.onrender.com/v1
- */
-const RAW_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
-const BASE_URL = `${RAW_BASE}/v1`;
+// Read the API base URL from your .env (e.g., https://ln-api-rgxr.onrender.com)
+const baseURL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 
-// Optional Basic auth: VITE_API_BASIC="username:password"
-const BASIC = import.meta.env.VITE_API_BASIC as string | undefined;
+// Optional: Basic auth "username:password" from .env (VITE_API_BASIC)
+const basic = import.meta.env.VITE_API_BASIC;
+
+// Build default headers
 const headers: Record<string, string> = {};
-if (BASIC) {
-  headers["Authorization"] = `Basic ${btoa(BASIC)}`;
+if (basic) {
+  // Browser-safe base64
+  headers["Authorization"] = `Basic ${btoa(basic)}`;
 }
 
 const api = axios.create({
-  baseURL: BASE_URL,
+  baseURL,
   headers,
-  timeout: 15000,
+  timeout: 20000,
 });
 
-export async function fetchFeatureColumns(): Promise<string[]> {
-  const res = await api.get("/features");
-  if (Array.isArray(res.data)) return res.data as string[];
-  if (Array.isArray(res.data?.columns)) return res.data.columns as string[];
-  return [];
-}
-
-export async function fetchPredictions(limit: number) {
-  const res = await api.get("/predictions", { params: { limit } });
-  return res.data;
-}
-
 export default api;
+export { api };
