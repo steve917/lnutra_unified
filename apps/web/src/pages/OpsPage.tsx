@@ -5,7 +5,7 @@ const API_BASE = import.meta.env.VITE_API_BASE;
 // Read a saved Basic Auth header from localStorage (base64 'user:pass')
 function getAuthHeader(): Record<string,string> {
   const raw = localStorage.getItem('opsAuth');
-  return raw ? { Authorization: Basic  } : {};
+  return raw ? { Authorization: `Basic ${raw}` } : {};
 }
 
 export default function OpsPage() {
@@ -17,7 +17,7 @@ export default function OpsPage() {
   async function load() {
     setErr('');
     try {
-      const res = await fetch(${API_BASE}/v1/predictions?limit=50, {
+      const res = await fetch(`${API_BASE}/v1/predictions?limit=50`, {
         headers: { ...getAuthHeader(), Accept: 'application/json' },
       });
       if (!res.ok) throw new Error(await res.text());
@@ -29,7 +29,7 @@ export default function OpsPage() {
   }
 
   function saveCreds() {
-    const encoded = btoa(${user}:);
+    const encoded = btoa(`${user}:${pass}`);
     localStorage.setItem('opsAuth', encoded);
     setUser('');
     setPass('');
