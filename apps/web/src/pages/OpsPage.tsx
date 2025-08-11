@@ -1,174 +1,120 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
+import { getFeatureColumns, apiBase, hasBasicAuth } from "../lib/api";
 
-type Row = {
-  id: number;
-  created_at: string;
-  safety_badge: string;
-  delta_weight_kg?: number | null;
-  delta_hba1c_pct?: number | null;
-  features?: Record<string, any> | null;
-};
+/**
+ * OpsPage
+ * - Calls GET /v1/features
+ * - Displays the feature keys your backend exposes
+ * - Shows helpful status text at the top (API base, whether Basic auth is set)
+ */
 
-const OpsPage: React.FC = () => {
-  const apiBase =
-    (import.meta.env.VITE_API_BASE_URL as string) ||
-    (import.meta.env.VITE_API_BASE as string) ||
-    "";
-  const basicCred = import.meta.env.VITE_API_BASIC as string | undefined;
-
-  const [rows, setRows] = useState<Row[]>([]);
-  const [err, setErr] = useState<string>("");
-  const [usingPath, setUsingPath] = useState<string>("(none)");
-
-  const hasBasic = !!basicCred;
-  const headers = useMemo(() => {
-    const h: Record<string, string> = { Accept: "application/json" };
-    if (hasBasic) h.Authorization = `Basic ${btoa(basicCred!)}`;
-    return h;
-  }, [hasBasic, basicCred]);
+export default function OpsPage() {
+  const [features, setFeatures] = useState<string[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function getRows() {
-      if (!apiBase) {
-        setErr("No API base URL. Set VITE_API_BASE_URL on Render.");
-        return;
+    const run = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const cols = await getFeatureColumns(); // GET /v1/features
+        // API may return array of strings or {name: string}[]; normalize:
+        const names =
+          Array.isArray(cols)
+            ? cols.map((c: any) => (typeof c === "string" ? c : c?.name)).filter(Boolean)
+            : [];
+        setFeatures(names);
+        console.log("[OPS] loaded features:", names);
+      } catch (err: any) {
+        console.error("[OPS] features error:", err);
+        const msg =
+          err?.response?.status
+            ? `HTTP ${err.response.status} — ${JSON.stringify(err.response.data)}`
+            : err?.message || "Unknown error";
+        setError(msg);
+      } finally {
+        setLoading(false);
       }
-      const base = apiBase.replace(/\/+$/, "");
-      const candidates = [
-        "/v1/predictions",
-        "/v1/predictions/",
-        "/predictions",
-        "/predictions/",
-      ];
-
-      for (const path of candidates) {
-        const url = `${base}${path}?limit=50`;
-        console.log("[OPS] trying:", url);
-        try {
-          const r = await fetch(url, { headers });
-          const text = await r.text();
-          console.log("[OPS] status:", r.status, "body:", text);
-          if (!r.ok) {
-            if (r.status === 404) continue; // try next candidate
-            throw new Error(`HTTP ${r.status} — ${text}`);
-          }
-          const data = JSON.parse(text);
-          if (!cancelled) {
-            setRows(Array.isArray(data) ? data : data?.items ?? []);
-            setErr("");
-            setUsingPath(path);
-          }
-          return;
-        } catch (e: any) {
-          console.error("[OPS] fetch error:", e);
-          // if not 404 the loop continues only if the next candidate might succeed
-        }
-      }
-
-      if (!cancelled) {
-        setErr(
-          "No predictions endpoint found (tried /v1/predictions, /v1/predictions/, /predictions, /predictions/)."
-        );
-        setRows([]);
-        setUsingPath("(not found)");
-      }
-    }
-
-    getRows();
-    return () => {
-      cancelled = true;
     };
-  }, [apiBase, headers]);
+    run();
+  }, []);
 
   return (
-    <div style={{ padding: "24px" }}>
-      <h1>Ops</h1>
+    <div style={{ padding: 24 }}>
+      <h1 style={{ marginBottom: 8 }}>Ops</h1>
 
-      <div style={{ fontSize: 12, color: "#666", marginBottom: 12 }}>
-        API_BASE: <code>{apiBase || "(empty)"}</code> &nbsp;|&nbsp; Has Basic:{" "}
-        <code>{hasBasic ? "yes" : "no"}</code> &nbsp;|&nbsp; Using path:{" "}
-        <code>{usingPath}</code>
+      <div style={{ color: "#666", fontSize: 14, marginBottom: 16 }}>
+        API_BASE: <code>{apiBase}</code> &nbsp;|&nbsp; Has Basic:{" "}
+        <strong>{hasBasicAuth ? "yes" : "no"}</strong>
       </div>
 
-      {err && (
+      {loading && <div>Loading features…</div>}
+
+      {error && (
         <div
           style={{
-            background: "#fde2e2",
-            color: "#a40000",
-            padding: 10,
+            background: "#fde8e8",
+            border: "1px solid #f8b4b4",
+            color: "#c81e1e",
+            padding: "10px 12px",
             borderRadius: 6,
             marginBottom: 12,
           }}
         >
-          {err}
+          Failed to load features. {error}
         </div>
       )}
 
-      <table
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          tableLayout: "fixed",
-          fontSize: 14,
-        }}
-      >
-        <thead>
-          <tr>
-            <th style={th}>Time (UTC)</th>
-            <th style={th}>Badge</th>
-            <th style={th}>Δ Weight (kg)</th>
-            <th style={th}>Δ HbA1c (%)</th>
-            <th style={th}>Features (summary)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.id}>
-              <td style={td}>{r.created_at}</td>
-              <td style={td}>{r.safety_badge}</td>
-              <td style={td}>{fmtNum(r.delta_weight_kg)}</td>
-              <td style={td}>{fmtNum(r.delta_hba1c_pct)}</td>
-              <td style={td}>{summarizeFeatures(r.features)}</td>
-            </tr>
-          ))}
-          {!rows.length && !err && (
-            <tr>
-              <td style={td} colSpan={5}>
-                (No rows yet)
-              </td>
-            </tr>
+      {!loading && !error && (
+        <>
+          <h3 style={{ marginTop: 0 }}>Feature columns</h3>
+          {features.length === 0 ? (
+            <div style={{ color: "#666" }}>No features returned from /v1/features.</div>
+          ) : (
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                marginTop: 8,
+              }}
+            >
+              <thead>
+                <tr>
+                  <th style={th}>#</th>
+                  <th style={th}>Feature name</th>
+                </tr>
+              </thead>
+              <tbody>
+                {features.map((name, idx) => (
+                  <tr key={name}>
+                    <td style={td}>{idx + 1}</td>
+                    <td style={tdMono}>{name}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
-        </tbody>
-      </table>
+        </>
+      )}
     </div>
   );
-};
+}
 
 const th: React.CSSProperties = {
   textAlign: "left",
+  padding: "8px 10px",
   borderBottom: "1px solid #ddd",
-  padding: "8px 6px",
+  background: "#fafafa",
   fontWeight: 600,
 };
+
 const td: React.CSSProperties = {
+  padding: "8px 10px",
   borderBottom: "1px solid #eee",
-  padding: "8px 6px",
-  verticalAlign: "top",
 };
 
-function fmtNum(v?: number | null) {
-  return typeof v === "number" ? v.toFixed(1) : "";
-}
-
-function summarizeFeatures(f?: Record<string, any> | null) {
-  if (!f) return "";
-  const keys = Object.keys(f);
-  return keys
-    .slice(0, 5)
-    .map((k) => `${k}: ${String(f[k]).slice(0, 20)}`)
-    .join(", ");
-}
-
-export default OpsPage;
+const tdMono: React.CSSProperties = {
+  ...td,
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+};
