@@ -1,14 +1,50 @@
 ﻿from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import os, httpx
 
-from app.db import SessionLocal, init_db
-from app.models import Prediction
+# --- DB (inlined to avoid import issues) ---
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.orm import declarative_base, Mapped, mapped_column
+from sqlalchemy import Integer, String, Float, DateTime, JSON, func, select, desc, insert
 
-app = FastAPI(title="L-Nutra API", version="0.2.0")
+Base = declarative_base()
 
+def _to_async_dsn(url: str) -> str:
+    if not url:
+        return "postgresql+psycopg://postgres:postgres@localhost/postgres"
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://"):]
+    return url
+
+DATABASE_URL = _to_async_dsn(os.getenv("DATABASE_URL", ""))
+
+engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+class Prediction(Base):
+    __tablename__ = "predictions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    client_ip: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    features: Mapped[dict] = mapped_column(JSON, nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, nullable=False)
+    weight_delta_kg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    hba1c_delta_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    safety_badge: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+# --- FastAPI app ---
+app = FastAPI(title="L-Nutra API", version="0.3.0")
+
+# CORS (prod: your web + localhost)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://lnutra-unified.onrender.com","http://localhost:5173"],
@@ -113,24 +149,21 @@ async def predict(req: PredictFlexible, request: Request):
         badge = data.get("safetyBadge") or data.get("safety_badge") or "green"
         result = _superset(w, h, badge, **{k:v for k,v in data.items() if k not in ("weight","hba1c")})
 
-    # Save to DB
     client_ip = request.headers.get("x-forwarded-for") or request.client.host
     ua = request.headers.get("user-agent")
-    from sqlalchemy import insert
     async with SessionLocal() as session:
         await session.execute(insert(Prediction).values(
             client_ip=client_ip, user_agent=ua,
             features=f.model_dump(), result=result,
             weight_delta_kg=result.get("weight"),
             hba1c_delta_pct=result.get("hba1c"),
-            safety_badge=result.get("safety_badge") or result.get("safetyBadge")
+            safety_badge=result.get("safety_badge") or result.get("safetyBadge"),
         ))
         await session.commit()
     return result
 
 @app.get("/v1/predictions")
 async def list_predictions(limit: int = Query(50, ge=1, le=500)):
-    from sqlalchemy import select, desc
     async with SessionLocal() as session:
         rows = (await session.execute(
             select(Prediction).order_by(desc(Prediction.created_at)).limit(limit)
@@ -146,11 +179,3 @@ async def list_predictions(limit: int = Query(50, ge=1, le=500)):
         "features": r.features,
       } for r in rows
     ]
-
-@app.get("/v1/playbooks")
-async def list_playbooks():
-    return []
-
-@app.get("/v1/playbooks/{playbook_id}")
-async def get_playbook(playbook_id: str):
-    return {"id": playbook_id, "title": "Unavailable", "steps": []}
