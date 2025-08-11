@@ -3,6 +3,8 @@ import { usePredictFlow } from './hooks/usePredictFlow';
 import { RecommendationCard } from './components/RecommendationCard';
 import Playbooks from './components/Playbooks';
 import type { Features } from './types/predict';
+import OpsPage from './pages/OpsPage';
+
 
 const initialFeatures: Features = {
   age_years: 40,
@@ -19,6 +21,10 @@ const initialFeatures: Features = {
 export default function App() {
   const [features, setFeatures] = useState<Features>(initialFeatures);
   const { loading, errors, hints, result, submit } = usePredictFlow();
+if (typeof window !== 'undefined' && window.location.pathname === '/ops') {
+  return <OpsPage />;
+}
+
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
     const { name, value } = e.target;
