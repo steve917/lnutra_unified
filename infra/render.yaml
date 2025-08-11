@@ -43,6 +43,7 @@
       - key: PREPROC
         value: ""
 
+  # >>> STATIC SITE (frontend) <<<
   - type: static
     name: ln-web
     rootDir: apps/web
