@@ -4,8 +4,8 @@ from pydantic import BaseModel
 from typing import Optional
 import os, httpx
 
-from .db import SessionLocal, init_db
-from .models import Prediction
+from app.db import SessionLocal, init_db
+from app.models import Prediction
 
 app = FastAPI(title="L-Nutra API", version="0.2.0")
 
