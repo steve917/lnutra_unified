@@ -1,88 +1,141 @@
-﻿import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from "react";
+import api from "../lib/api";
 
-const API_BASE = import.meta.env.VITE_API_BASE;
+type Features = Record<string, any>;
 
-// Read a saved Basic Auth header from localStorage (base64 'user:pass')
-function getAuthHeader(): Record<string,string> {
-  const raw = localStorage.getItem('opsAuth');
-  return raw ? { Authorization: `Basic ${raw}` } : {};
-}
+type PredictionRow = {
+  id: number;
+  created_at: string; // ISO in UTC
+  safety_badge: "green" | "yellow" | "red";
+  delta_weight_kg: number;
+  delta_hba1c_pct: number;
+  features: Features;
+};
+
+const prettyFeatures = (f: Features) => {
+  // Show a compact summary like: "age_years: 40, sex: M, weight_kg: 70, ..."
+  const keys = [
+    "age_years",
+    "sex",
+    "weight_kg",
+    "bmi",
+    "hba1c",
+    "fmd_regimen_type",
+    "n_cycles",
+    "adherence_pct",
+    "meds_diabetes",
+  ];
+  const parts: string[] = [];
+  for (const k of keys) {
+    if (k in f) parts.push(`${k}: ${f[k]}`);
+  }
+  return parts.join(", ");
+};
 
 export default function OpsPage() {
-  const [rows, setRows] = useState<any[]>([]);
-  const [err, setErr] = useState('');
-  const [user, setUser] = useState('');
-  const [pass, setPass] = useState('');
+  const [rows, setRows] = useState<PredictionRow[]>([]);
+  const [limit, setLimit] = useState<number>(50);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  async function load() {
-    setErr('');
+  const backend = import.meta.env.VITE_API_BASE_URL?.replace(/\/+$/, "") || "";
+
+  const load = async (n = limit) => {
+    setLoading(true);
+    setErr(null);
     try {
-      const res = await fetch(`${API_BASE}/v1/predictions?limit=50`, {
-        headers: { ...getAuthHeader(), Accept: 'application/json' },
+      const { data } = await api.get<PredictionRow[]>(`/v1/predictions`, {
+        params: { limit: n },
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
       setRows(data);
-    } catch (e:any) {
-      setErr(e.message ?? 'Failed to load');
+    } catch (e: any) {
+      setErr(e?.message || "Failed to load predictions");
+    } finally {
+      setLoading(false);
     }
-  }
+  };
 
-  function saveCreds() {
-    const encoded = btoa(`${user}:${pass}`);
-    localStorage.setItem('opsAuth', encoded);
-    setUser('');
-    setPass('');
-    load();
-  }
+  useEffect(() => {
+    load(limit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit]);
 
-  function clearCreds() {
-    localStorage.removeItem('opsAuth');
-    setRows([]);
-    setErr('');
-  }
-
-  useEffect(() => { load(); }, []);
+  const total = rows.length;
+  const tableBody = useMemo(
+    () =>
+      rows.map((r) => (
+        <tr key={r.id}>
+          <td>{new Date(r.created_at).toISOString().replace("T", " ").replace("Z", "")}</td>
+          <td style={{ textTransform: "capitalize" }}>{r.safety_badge}</td>
+          <td>{r.delta_weight_kg}</td>
+          <td>{r.delta_hba1c_pct}</td>
+          <td>{prettyFeatures(r.features)}</td>
+        </tr>
+      )),
+    [rows]
+  );
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-8">
-      <h1 className="text-2xl font-bold mb-4">Ops Dashboard</h1>
-
-      <div className="flex gap-2 items-end mb-4">
-        <div>
-          <label className="block text-sm">OPS user</label>
-          <input className="border px-2 py-1 rounded" value={user} onChange={e=>setUser(e.target.value)} />
-        </div>
-        <div>
-          <label className="block text-sm">OPS pass</label>
-          <input className="border px-2 py-1 rounded" type="password" value={pass} onChange={e=>setPass(e.target.value)} />
-        </div>
-        <button className="bg-blue-600 text-white px-3 py-2 rounded" onClick={saveCreds}>Save & Reload</button>
-        <button className="border px-3 py-2 rounded" onClick={clearCreds}>Clear</button>
+    <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px" }}>
+      <h1 style={{ marginBottom: 8 }}>Ops Dashboard</h1>
+      <div style={{ color: "#666", fontSize: 12, marginBottom: 16 }}>
+        Backend: {backend}
       </div>
 
-      {err && <p className="text-red-600 mb-4 break-all">{err}</p>}
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
+        <label>
+          Rows:&nbsp;
+          <select
+            value={limit}
+            onChange={(e) => setLimit(Number(e.target.value))}
+          >
+            {[10, 25, 50, 100, 200].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button onClick={() => load()} disabled={loading}>
+          {loading ? "Loading…" : "Reload"}
+        </button>
+        {err && <span style={{ color: "#b00020" }}>Error: {err}</span>}
+        <span style={{ marginLeft: "auto", color: "#666" }}>
+          Showing {total} row{total === 1 ? "" : "s"}
+        </span>
+      </div>
 
-      <table className="w-full border text-sm">
-        <thead><tr className="bg-gray-50">
-          <th className="p-2 border">Time</th>
-          <th className="p-2 border">Badge</th>
-          <th className="p-2 border">Δ Weight (kg)</th>
-          <th className="p-2 border">Δ HbA1c (%)</th>
-          <th className="p-2 border">Features</th>
-        </tr></thead>
-        <tbody>
-          {rows.map((r:any)=>(
-            <tr key={r.id}>
-              <td className="p-2 border">{r.created_at}</td>
-              <td className="p-2 border">{r.safety_badge}</td>
-              <td className="p-2 border">{r.weight}</td>
-              <td className="p-2 border">{r.hba1c}</td>
-              <td className="p-2 border break-all">{JSON.stringify(r.features)}</td>
+      <div style={{ overflowX: "auto" }}>
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+            fontSize: 14,
+            lineHeight: 1.4,
+          }}
+        >
+          <thead>
+            <tr style={{ background: "#f4f6f8" }}>
+              <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid #ddd" }}>
+                Time (UTC)
+              </th>
+              <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid #ddd" }}>
+                Badge
+              </th>
+              <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid #ddd" }}>
+                Δ Weight (kg)
+              </th>
+              <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid #ddd" }}>
+                Δ HbA1c (%)
+              </th>
+              <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid #ddd" }}>
+                Features (summary)
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </main>
+          </thead>
+          <tbody>{tableBody}</tbody>
+        </table>
+      </div>
+    </div>
   );
 }
