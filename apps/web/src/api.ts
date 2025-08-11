@@ -1,37 +1,24 @@
-﻿// apps/web/src/lib/api.ts
-import axios, { AxiosInstance } from "axios";
+// apps/web/src/lib/api.ts
+import axios from "axios";
 
-// Vite env vars (set these in apps/web/.env)
-const baseURL = import.meta.env.VITE_API_BASE_URL as string | undefined;
-const basicAuth = import.meta.env.VITE_API_BASIC as string | undefined;
+// Read the API base URL from your .env (e.g., https://ln-api-rgxr.onrender.com)
+const baseURL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 
-if (!baseURL) {
-  console.warn("⚠️ VITE_API_BASE_URL is not set in .env — API calls will fail.");
-}
+// Optional: Basic auth "username:password" from .env (VITE_API_BASIC)
+const basic = import.meta.env.VITE_API_BASIC;
 
+// Build default headers
 const headers: Record<string, string> = {};
-if (basicAuth) {
-  // username:password -> base64
-  const encoded = btoa(basicAuth);
-  headers["Authorization"] = `Basic ${encoded}`;
-} else {
-  console.warn("⚠️ VITE_API_BASIC is not set in .env — API may return 401 Unauthorized.");
+if (basic) {
+  // Browser-safe base64
+  headers["Authorization"] = `Basic ${btoa(basic)}`;
 }
 
-const api: AxiosInstance = axios.create({
+const api = axios.create({
   baseURL,
   headers,
-  timeout: 15000,
+  timeout: 20000,
 });
 
-api.interceptors.response.use(
-  (res) => res,
-  (err) => {
-    console.error("API error:", err?.response || err);
-    return Promise.reject(err);
-  }
-);
-
-// Export BOTH default and named so any import style works
 export default api;
 export { api };
