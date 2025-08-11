@@ -1,21 +1,48 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-type PredictionItem = {
-  time?: string;
-  badge?: "green" | "yellow" | "red" | string;
-  delta_weight_kg?: number;
-  delta_hba1c_pct?: number;
-  // If your API returns something like { features: {...} }, keep it generic:
-  features?: Record<string, unknown> | string | null;
+/**
+ * PredictorPage
+ * - Reads your backend base URL from Vite env: VITE_API_BASE_URL
+ * - Calls /v1/predictions?limit={n}
+ * - Shows a small rows selector, the API base it’s using, and a simple table
+ */
+
+type Features = {
+  age_years?: number;
+  sex?: string;
+  weight_kg?: number;
+  bmi?: number;
+  hba1c?: number;
+  meds_diabetes?: number;
+  fmd_regimen_type?: string;
+  n_cycles?: number;
+  adherence_pct?: number;
+  // allow unknowns without breaking rendering
+  [k: string]: unknown;
 };
 
-const apiBase = import.meta.env.VITE_API_BASE_URL;
+type Prediction = {
+  id: number;
+  created_at: string; // ISO string
+  safety_badge: "green" | "yellow" | "red" | string;
+  weight: number; // delta kg
+  hba1c: number; // delta %
+  features: Features;
+};
+
+const ROW_OPTIONS = [10, 20, 50, 100, 200];
 
 export default function PredictorPage() {
-  const [data, setData] = useState<PredictionItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const apiBaseRaw = import.meta.env.VITE_API_BASE_URL as string | undefined;
+
+  // normalize base (trim trailing slashes)
+  const apiBase = useMemo(() => (apiBaseRaw || "").replace(/\/+$/, ""), [apiBaseRaw]);
+  const predictionsPath = "/v1/predictions"; // from Swagger
+
+  const [limit, setLimit] = useState<number>(50);
+  const [rows, setRows] = useState<Prediction[] | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [limit, setLimit] = useState(50);
 
   useEffect(() => {
     let cancelled = false;
@@ -23,127 +50,215 @@ export default function PredictorPage() {
     async function load() {
       setLoading(true);
       setError(null);
+
+      if (!apiBase) {
+        setLoading(false);
+        setError(
+          "VITE_API_BASE_URL is missing. Create apps/web/.env with VITE_API_BASE_URL=https://ln-api-rgxr.onrender.com"
+        );
+        return;
+      }
+
+      const url = `${apiBase}${predictionsPath}?limit=${encodeURIComponent(limit)}`;
+
       try {
-        const url = `${apiBase}/predictions?limit=${limit}`;
-        const res = await fetch(url, { headers: { "Content-Type": "application/json" } });
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-        const json = await res.json();
+        const res = await fetch(url, {
+          headers: { Accept: "application/json" },
+        });
 
-        // The API may return either an array or an object with a 'items'/'data' field.
-        const rows: PredictionItem[] =
-          Array.isArray(json) ? json :
-          Array.isArray(json?.items) ? json.items :
-          Array.isArray(json?.data) ? json.data : [];
+        if (!res.ok) {
+          // try to read response text for more context
+          let detail = "";
+          try {
+            detail = await res.text();
+          } catch {
+            /* ignore */
+          }
+          throw new Error(
+            `Request failed: ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}`
+          );
+        }
 
-        if (!cancelled) setData(rows);
-      } catch (e: any) {
-        if (!cancelled) setError(e.message || "Failed to load predictions");
+        const data = (await res.json()) as Prediction[];
+        if (!cancelled) setRows(data);
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message || "Unknown error");
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
     load();
-    return () => { cancelled = true; };
-  }, [limit]);
-
-  const prettyRows = useMemo(() => {
-    return data.map((r) => {
-      const features =
-        typeof r.features === "string"
-          ? r.features
-          : r.features
-          ? JSON.stringify(r.features)
-          : "";
-      return {
-        time: r.time ?? "",
-        badge: r.badge ?? "",
-        delta_weight_kg: r.delta_weight_kg ?? null,
-        delta_hba1c_pct: r.delta_hba1c_pct ?? null,
-        features,
-      };
-    });
-  }, [data]);
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, limit]);
 
   return (
-    <div style={{ padding: 24, maxWidth: 1100, margin: "0 auto", fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
-      <h1 style={{ marginBottom: 12 }}>Predictor</h1>
+    <div style={{ padding: 24, fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI" }}>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <h1 style={{ margin: 0 }}>Predictor</h1>
+        <small style={{ opacity: 0.7 }}>
+          API:&nbsp;
+          <code>{apiBase || "(not set)"}</code>
+        </small>
+      </header>
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16 }}>
-        <label htmlFor="limit">Rows:</label>
-        <select
-          id="limit"
-          value={limit}
-          onChange={(e) => setLimit(Number(e.target.value))}
-          style={{ padding: "6px 10px" }}
-        >
-          {[20, 50, 100, 200].map((n) => (
-            <option key={n} value={n}>{n}</option>
-          ))}
-        </select>
-        <div style={{ marginLeft: "auto", opacity: 0.7, fontSize: 13 }}>
-          API: {apiBase || "(missing VITE_API_BASE_URL)"}
-        </div>
-      </div>
-
-      {loading && <div>Loading…</div>}
-      {error && <div style={{ color: "crimson" }}>Error: {error}</div>}
-
-      {!loading && !error && (
-        <div style={{ overflowX: "auto" }}>
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              border: "1px solid #e3e3e3",
-            }}
+      <section style={{ marginTop: 16, display: "flex", gap: 16, alignItems: "center" }}>
+        <label>
+          Rows:&nbsp;
+          <select
+            value={limit}
+            onChange={(e) => setLimit(Number(e.target.value))}
+            style={{ padding: "4px 8px" }}
           >
-            <thead>
-              <tr style={{ background: "#fafafa" }}>
-                <th style={th}>Time</th>
-                <th style={th}>Badge</th>
-                <th style={th}>Δ Weight (kg)</th>
-                <th style={th}>Δ HbA1c (%)</th>
-                <th style={th}>Features</th>
-              </tr>
-            </thead>
-            <tbody>
-              {prettyRows.map((r, i) => (
-                <tr key={i} style={{ borderTop: "1px solid #eee" }}>
-                  <td style={td}>{r.time}</td>
-                  <td style={{ ...td, fontWeight: 600, color: colorForBadge(r.badge as string) }}>
-                    {r.badge}
-                  </td>
-                  <td style={td}>{fmtNum(r.delta_weight_kg)}</td>
-                  <td style={td}>{fmtNum(r.delta_hba1c_pct)}</td>
-                  <td style={{ ...td, whiteSpace: "nowrap", maxWidth: 0 }}>
-                    <code style={{ fontSize: 12 }}>{r.features}</code>
-                  </td>
-                </tr>
-              ))}
-              {prettyRows.length === 0 && (
-                <tr><td colSpan={5} style={{ ...td, textAlign: "center", opacity: 0.7 }}>No data</td></tr>
-              )}
-            </tbody>
-          </table>
+            {ROW_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+            <option value={50}>50</option>
+          </select>
+        </label>
+        {loading && <span style={{ opacity: 0.7 }}>Loading…</span>}
+      </section>
+
+      {error && (
+        <div style={{ marginTop: 16, color: "#b00020" }}>
+          <strong>Error:</strong> {error}
         </div>
       )}
+
+      <div style={{ marginTop: 16, overflowX: "auto" }}>
+        <table
+          style={{
+            borderCollapse: "collapse",
+            minWidth: 680,
+            width: "100%",
+            border: "1px solid #e5e7eb",
+          }}
+        >
+          <thead style={{ background: "#f9fafb" }}>
+            <tr>
+              <Th>Time (UTC)</Th>
+              <Th>Badge</Th>
+              <Th>Δ Weight (kg)</Th>
+              <Th>Δ HbA1c (%)</Th>
+              <Th>Features (summary)</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows?.map((r) => (
+              <tr key={r.id}>
+                <Td mono>{new Date(r.created_at).toISOString()}</Td>
+                <Td>
+                  <Badge color={r.safety_badge} />
+                </Td>
+                <Td right>{fmtNum(r.weight)}</Td>
+                <Td right>{fmtNum(r.hba1c)}</Td>
+                <Td mono>
+                  {summarizeFeatures(r.features)}
+                </Td>
+              </tr>
+            ))}
+            {!loading && !error && (rows?.length ?? 0) === 0 && (
+              <tr>
+                <Td colSpan={5} style={{ opacity: 0.7 }}>
+                  No data.
+                </Td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
-const th: React.CSSProperties = { textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e3e3e3", fontWeight: 600, fontSize: 14 };
-const td: React.CSSProperties = { padding: "8px 12px", fontSize: 14 };
+/** Small presentational helpers */
 
-function colorForBadge(b?: string) {
-  const s = (b || "").toLowerCase();
-  if (s === "green") return "#0a7c2e";
-  if (s === "yellow") return "#a37a00";
-  if (s === "red") return "#b00020";
-  return "#333";
+function Th({ children }: { children: React.ReactNode }) {
+  return (
+    <th
+      style={{
+        textAlign: "left",
+        padding: "10px 12px",
+        borderBottom: "1px solid #e5e7eb",
+        fontWeight: 600,
+      }}
+    >
+      {children}
+    </th>
+  );
 }
 
-function fmtNum(n: number | null) {
-  if (n === null || Number.isNaN(n)) return "";
-  return Number(n).toFixed(1);
+function Td({
+  children,
+  right,
+  mono,
+  colSpan,
+  style,
+}: {
+  children: React.ReactNode;
+  right?: boolean;
+  mono?: boolean;
+  colSpan?: number;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <td
+      colSpan={colSpan}
+      style={{
+        padding: "10px 12px",
+        borderBottom: "1px solid #f1f5f9",
+        textAlign: right ? "right" : "left",
+        fontFamily: mono ? "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" : undefined,
+        ...style,
+      }}
+    >
+      {children}
+    </td>
+  );
+}
+
+function Badge({ color }: { color: string }) {
+  const bg =
+    color === "green" ? "#d1fae5" : color === "yellow" ? "#fef3c7" : color === "red" ? "#fee2e2" : "#e5e7eb";
+  const fg =
+    color === "green" ? "#065f46" : color === "yellow" ? "#92400e" : color === "red" ? "#991b1b" : "#374151";
+  const label = color || "unknown";
+  return (
+    <span
+      style={{
+        background: bg,
+        color: fg,
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 12,
+        textTransform: "capitalize",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function fmtNum(n: number | null | undefined) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  return n.toFixed(1);
+}
+
+function summarizeFeatures(f: Features) {
+  // Show a short, readable subset
+  const parts: string[] = [];
+  if (f.age_years !== undefined) parts.push(`age:${f.age_years}`);
+  if (f.sex) parts.push(`sex:${f.sex}`);
+  if (f.weight_kg !== undefined) parts.push(`wt:${f.weight_kg}`);
+  if (f.bmi !== undefined) parts.push(`bmi:${f.bmi}`);
+  if (f.hba1c !== undefined) parts.push(`hba1c:${f.hba1c}`);
+  if (f.meds_diabetes !== undefined) parts.push(`meds:${f.meds_diabetes}`);
+  if (f.fmd_regimen_type) parts.push(`regimen:${f.fmd_regimen_type}`);
+  if (f.n_cycles !== undefined) parts.push(`cycles:${f.n_cycles}`);
+  if (f.adherence_pct !== undefined) parts.push(`adherence:${f.adherence_pct}%`);
+  return parts.join(", ") || "(none)";
 }
