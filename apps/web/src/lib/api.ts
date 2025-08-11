@@ -1,69 +1,46 @@
 import axios from "axios";
 
+export const apiBase =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/+$/,'') ?? "";
+
+export const hasBasicAuth = !!import.meta.env.VITE_API_BASIC;
+
+const headers = hasBasicAuth && import.meta.env.VITE_API_BASIC
+  ? { Authorization: `Basic ${btoa(import.meta.env.VITE_API_BASIC)}` }
+  : undefined;
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL,
-  headers: {
-    Authorization: `Basic ${btoa(import.meta.env.VITE_API_BASIC)}`,
-  },
+  baseURL: apiBase,
+  headers,
 });
 
 export default api;
 
-// Expose for UI diagnostics
-export const apiBase = import.meta.env.VITE_API_BASE_URL;
-export const hasBasicAuth = Boolean(import.meta.env.VITE_API_BASIC);
-
-// ---------- Features ----------
 export async function getFeatureColumns(): Promise<string[]> {
   const { data } = await api.get("/v1/features");
-  return data as string[];
+  return data;
 }
 
-// ---------- Predictions (optional) ----------
-/**
- * Try to find a list endpoint for predictions (if backend provides one).
- * We DO NOT try /v1/predict because that is POST-only.
- */
-const PREDICTION_LIST_CANDIDATES = [
-  "/v1/predictions",
-  "/v1/predictions/",
-  "/predictions",
-  "/predictions/",
-];
-
-export async function resolvePredictionsPath(): Promise<string | null> {
-  for (const path of PREDICTION_LIST_CANDIDATES) {
-    try {
-      // HEAD often returns 405 on some frameworks, so use GET with a small limit
-      const url = path.includes("?") ? path : `${path}?limit=1`;
-      await api.get(url);
-      return path.replace(/\/$/, ""); // normalize trailing slash
-    } catch {
-      // ignore and try next candidate
-    }
-  }
-  return null;
-}
-
-export type PredictionRow = {
-  created_at: string;
-  badge: string;
-  delta_weight_kg: number;
-  delta_hba1c_pct: number;
-  features: Record<string, unknown>;
+export type PredictIn = {
+  adherence_pct: number;
+  age_years: number;
+  bmi: number;
+  fmd_regimen_type: string;
+  hba1c: number;
+  meds_diabetes: number;
+  n_cycles: number;
+  sex: string;
+  weight_kg: number;
 };
 
-/**
- * Fetch a list of predictions from the resolved path. If no list endpoint
- * exists on the backend, this will throw so the UI can show a banner.
- */
-export async function getPredictions(limit: number): Promise<PredictionRow[]> {
-  const path = await resolvePredictionsPath();
-  if (!path) {
-    throw new Error(
-      "No predictions endpoint found (tried /v1/predictions and /predictions)."
-    );
-  }
-  const { data } = await api.get(`${path}?limit=${limit}`);
-  return data as PredictionRow[];
+export type PredictOut = {
+  badge: string;               // "green", "yellow", "red"
+  delta_weight_kg: number;     // e.g., -0.2
+  delta_hba1c_pct: number;     // e.g., -0.1
+  features: PredictIn;
+};
+
+export async function postPredict(body: PredictIn): Promise<PredictOut> {
+  const { data } = await api.post("/v1/predict", body);
+  return data;
 }
