@@ -10,7 +10,6 @@ type Row = {
 };
 
 const OpsPage: React.FC = () => {
-  // Read envs exactly how Vite exposes them
   const apiBase =
     (import.meta.env.VITE_API_BASE_URL as string) ||
     (import.meta.env.VITE_API_BASE as string) ||
@@ -19,54 +18,74 @@ const OpsPage: React.FC = () => {
 
   const [rows, setRows] = useState<Row[]>([]);
   const [err, setErr] = useState<string>("");
+  const [usingPath, setUsingPath] = useState<string>("(none)");
 
   const hasBasic = !!basicCred;
   const headers = useMemo(() => {
-    const h: Record<string, string> = { "Accept": "application/json" };
-    if (hasBasic) {
-      const encoded = btoa(basicCred!);
-      h["Authorization"] = `Basic ${encoded}`;
-    }
+    const h: Record<string, string> = { Accept: "application/json" };
+    if (hasBasic) h.Authorization = `Basic ${btoa(basicCred!)}`;
     return h;
   }, [hasBasic, basicCred]);
 
   useEffect(() => {
-    console.log("[OPS] component mounted");
-    console.log("[OPS] apiBase =", apiBase);
-    console.log("[OPS] hasBasic =", hasBasic);
+    let cancelled = false;
 
-    if (!apiBase) {
-      setErr("No API base URL. Set VITE_API_BASE_URL on Render.");
-      return;
+    async function getRows() {
+      if (!apiBase) {
+        setErr("No API base URL. Set VITE_API_BASE_URL on Render.");
+        return;
+      }
+      const base = apiBase.replace(/\/+$/, "");
+      const candidates = ["/v1/predictions", "/predictions"]; // try v1 then fallback
+
+      for (const path of candidates) {
+        const url = `${base}${path}?limit=50`;
+        console.log("[OPS] trying:", url);
+        try {
+          const r = await fetch(url, { headers });
+          const text = await r.text();
+          console.log("[OPS] status:", r.status, "body:", text);
+          if (!r.ok) {
+            if (r.status === 404) {
+              // try next candidate
+              continue;
+            }
+            throw new Error(`HTTP ${r.status} — ${text}`);
+          }
+          const data = JSON.parse(text);
+          if (!cancelled) {
+            setRows(Array.isArray(data) ? data : data?.items ?? []);
+            setErr("");
+            setUsingPath(path);
+          }
+          return;
+        } catch (e: any) {
+          console.error("[OPS] fetch error:", e);
+          // try next candidate on 404, otherwise bubble
+        }
+      }
+
+      if (!cancelled) {
+        setErr("No predictions endpoint found (tried /v1/predictions and /predictions).");
+        setRows([]);
+        setUsingPath("(not found)");
+      }
     }
 
-    const url = `${apiBase.replace(/\/+$/, "")}/v1/predictions?limit=50`;
-    console.log("[OPS] fetching:", url);
-    fetch(url, { headers })
-      .then(async (r) => {
-        console.log("[OPS] status:", r.status);
-        const text = await r.text();
-        console.log("[OPS] raw body:", text);
-        if (!r.ok) {
-          throw new Error(`HTTP ${r.status} — ${text}`);
-        }
-        const data = JSON.parse(text);
-        setRows(Array.isArray(data) ? data : data?.items ?? []);
-      })
-      .catch((e) => {
-        console.error("[OPS] fetch error:", e);
-        setErr(String(e));
-      });
-  }, [apiBase, headers, hasBasic]);
+    getRows();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, headers]);
 
   return (
     <div style={{ padding: "24px" }}>
       <h1>Ops</h1>
 
-      {/* Small debug block so we can see envs rendered in the DOM */}
       <div style={{ fontSize: 12, color: "#666", marginBottom: 12 }}>
         API_BASE: <code>{apiBase || "(empty)"}</code> &nbsp;|&nbsp; Has Basic:{" "}
-        <code>{hasBasic ? "yes" : "no"}</code>
+        <code>{hasBasic ? "yes" : "no"}</code> &nbsp;|&nbsp; Using path:{" "}
+        <code>{usingPath}</code>
       </div>
 
       {err && (
