@@ -1,141 +1,192 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
-import api from "../lib/api";
 
-type Features = Record<string, any>;
+/**
+ * Debug Ops page
+ * - Displays resolved API base
+ * - Calls GET /v1/predictions?limit=50 with Basic Auth
+ * - Renders rows or the exact error
+ * - Logs everything to the console
+ */
 
-type PredictionRow = {
+type Prediction = {
   id: number;
-  created_at: string; // ISO in UTC
-  safety_badge: "green" | "yellow" | "red";
-  delta_weight_kg: number;
-  delta_hba1c_pct: number;
-  features: Features;
-};
-
-const prettyFeatures = (f: Features) => {
-  // Show a compact summary like: "age_years: 40, sex: M, weight_kg: 70, ..."
-  const keys = [
-    "age_years",
-    "sex",
-    "weight_kg",
-    "bmi",
-    "hba1c",
-    "fmd_regimen_type",
-    "n_cycles",
-    "adherence_pct",
-    "meds_diabetes",
-  ];
-  const parts: string[] = [];
-  for (const k of keys) {
-    if (k in f) parts.push(`${k}: ${f[k]}`);
-  }
-  return parts.join(", ");
+  created_at: string; // ISO
+  safety_badge: string; // "green" | "yellow" | "red" | etc
+  delta_weight_kg?: number;
+  delta_hba1c_pct?: number;
+  features?: Record<string, unknown>;
 };
 
 export default function OpsPage() {
-  const [rows, setRows] = useState<PredictionRow[]>([]);
-  const [limit, setLimit] = useState<number>(50);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  console.log("[OPS] component mounted");
 
-  const backend = import.meta.env.VITE_API_BASE_URL?.replace(/\/+$/, "") || "";
+  // Read envs (both names supported; we’ll prefer VITE_API_BASE_URL)
+  const apiBase =
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_API_BASE ||
+    "";
 
-  const load = async (n = limit) => {
-    setLoading(true);
-    setErr(null);
-    try {
-      const { data } = await api.get<PredictionRow[]>(`/v1/predictions`, {
-        params: { limit: n },
-      });
-      setRows(data);
-    } catch (e: any) {
-      setErr(e?.message || "Failed to load predictions");
-    } finally {
-      setLoading(false);
+  // Basic credentials "user:pass"
+  const basic = import.meta.env.VITE_API_BASIC as string | undefined;
+
+  const [rows, setRows] = useState<Prediction[]>([]);
+  const [status, setStatus] = useState<{
+    phase: "idle" | "loading" | "ok" | "error";
+    message?: string;
+  }>({ phase: "idle" });
+
+  const headers = useMemo(() => {
+    const h: Record<string, string> = { Accept: "application/json" };
+    if (basic && basic.length > 0) {
+      // Authorization: Basic base64(user:pass)
+      const encoded = typeof window !== "undefined" ? btoa(basic) : "";
+      h["Authorization"] = `Basic ${encoded}`;
     }
-  };
+    return h;
+  }, [basic]);
 
   useEffect(() => {
-    load(limit);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [limit]);
+    (async () => {
+      if (!apiBase) {
+        setStatus({
+          phase: "error",
+          message:
+            "API base URL is empty. Check VITE_API_BASE_URL or VITE_API_BASE on Render.",
+        });
+        console.warn("[OPS] Missing API base env");
+        return;
+      }
 
-  const total = rows.length;
-  const tableBody = useMemo(
-    () =>
-      rows.map((r) => (
-        <tr key={r.id}>
-          <td>{new Date(r.created_at).toISOString().replace("T", " ").replace("Z", "")}</td>
-          <td style={{ textTransform: "capitalize" }}>{r.safety_badge}</td>
-          <td>{r.delta_weight_kg}</td>
-          <td>{r.delta_hba1c_pct}</td>
-          <td>{prettyFeatures(r.features)}</td>
-        </tr>
-      )),
-    [rows]
-  );
+      const url = `${apiBase.replace(/\/+$/, "")}/v1/predictions?limit=50`;
+      console.log("[OPS] fetching:", url, { headers });
+
+      setStatus({ phase: "loading" });
+      try {
+        const resp = await fetch(url, { headers });
+        const text = await resp.text();
+        console.log("[OPS] raw status:", resp.status, resp.statusText);
+        console.log("[OPS] raw body:", text);
+
+        if (!resp.ok) {
+          setStatus({
+            phase: "error",
+            message: `Request failed ${resp.status} ${resp.statusText}`,
+          });
+          return;
+        }
+
+        const data = JSON.parse(text) as Prediction[];
+        setRows(Array.isArray(data) ? data : []);
+        setStatus({ phase: "ok" });
+      } catch (err: any) {
+        console.error("[OPS] fetch error:", err);
+        setStatus({
+          phase: "error",
+          message: err?.message || String(err),
+        });
+      }
+    })();
+  }, [apiBase, headers]);
 
   return (
-    <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px" }}>
-      <h1 style={{ marginBottom: 8 }}>Ops Dashboard</h1>
-      <div style={{ color: "#666", fontSize: 12, marginBottom: 16 }}>
-        Backend: {backend}
+    <div style={{ padding: 16 }}>
+      <h1>Ops</h1>
+
+      <div style={{ marginBottom: 12, fontSize: 12, color: "#555" }}>
+        <div>
+          <strong>API_BASE:</strong>{" "}
+          {apiBase || <em>(undefined)</em>}
+        </div>
+        <div>
+          <strong>Has Basic:</strong> {basic ? "yes" : "no"}
+        </div>
       </div>
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
-        <label>
-          Rows:&nbsp;
-          <select
-            value={limit}
-            onChange={(e) => setLimit(Number(e.target.value))}
-          >
-            {[10, 25, 50, 100, 200].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button onClick={() => load()} disabled={loading}>
-          {loading ? "Loading…" : "Reload"}
-        </button>
-        {err && <span style={{ color: "#b00020" }}>Error: {err}</span>}
-        <span style={{ marginLeft: "auto", color: "#666" }}>
-          Showing {total} row{total === 1 ? "" : "s"}
-        </span>
-      </div>
+      {status.phase === "loading" && (
+        <div style={{ color: "#444" }}>Loading predictions…</div>
+      )}
+      {status.phase === "error" && (
+        <div
+          style={{
+            background: "#fde2e1",
+            border: "1px solid #f5b3b0",
+            color: "#7a2826",
+            padding: 10,
+            marginBottom: 12,
+            borderRadius: 6,
+            maxWidth: 900,
+          }}
+        >
+          Failed to load. {status.message}
+        </div>
+      )}
 
-      <div style={{ overflowX: "auto" }}>
+      {status.phase === "ok" && rows.length === 0 && (
+        <div style={{ color: "#444" }}>No rows.</div>
+      )}
+
+      {rows.length > 0 && (
         <table
           style={{
-            width: "100%",
             borderCollapse: "collapse",
+            width: "100%",
+            maxWidth: 1100,
             fontSize: 14,
-            lineHeight: 1.4,
           }}
         >
           <thead>
-            <tr style={{ background: "#f4f6f8" }}>
-              <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid #ddd" }}>
-                Time (UTC)
-              </th>
-              <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid #ddd" }}>
-                Badge
-              </th>
-              <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid #ddd" }}>
-                Δ Weight (kg)
-              </th>
-              <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid #ddd" }}>
-                Δ HbA1c (%)
-              </th>
-              <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid #ddd" }}>
-                Features (summary)
-              </th>
+            <tr>
+              <th style={th}>Time (UTC)</th>
+              <th style={th}>Badge</th>
+              <th style={th}>Δ Weight (kg)</th>
+              <th style={th}>Δ HbA1c (%)</th>
+              <th style={th}>Features (summary)</th>
             </tr>
           </thead>
-          <tbody>{tableBody}</tbody>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td style={td}>{r.created_at}</td>
+                <td style={tdCap}>{r.safety_badge}</td>
+                <td style={tdNum}>
+                  {r.delta_weight_kg ?? ""}
+                </td>
+                <td style={tdNum}>
+                  {r.delta_hba1c_pct ?? ""}
+                </td>
+                <td style={tdMono}>
+                  {summarize(r.features)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
         </table>
-      </div>
+      )}
     </div>
   );
+}
+
+const th: React.CSSProperties = {
+  textAlign: "left",
+  borderBottom: "1px solid #ddd",
+  padding: "8px 10px",
+  background: "#fafafa",
+};
+const td: React.CSSProperties = {
+  borderBottom: "1px solid #eee",
+  padding: "8px 10px",
+};
+const tdCap: React.CSSProperties = { ...td, textTransform: "capitalize" };
+const tdNum: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+const tdMono: React.CSSProperties = { ...td, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" };
+
+function summarize(obj?: Record<string, unknown>) {
+  if (!obj) return "";
+  try {
+    // shorten long JSON for the table
+    const s = JSON.stringify(obj);
+    return s.length > 120 ? s.slice(0, 117) + "…" : s;
+  } catch {
+    return "";
+  }
 }
