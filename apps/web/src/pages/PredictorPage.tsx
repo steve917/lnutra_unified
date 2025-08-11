@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api } from "../lib/api";
+import api, { fetchFeatureColumns, fetchPredictions } from "../lib/api";
+
 
 // Types for safety
 type FeatureValues = Record<string, string>;
