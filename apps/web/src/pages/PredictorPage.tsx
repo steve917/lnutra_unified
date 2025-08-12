@@ -1,5 +1,14 @@
-import React, { useEffect, useRef, useState } from "react";
-import { postPredict, PredictIn, PredictOut, apiBase, hasBasicAuth } from "../lib/api";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import "chart.js/auto";
+import { Chart } from "chart.js/auto";
+import { postPredict, type PredictIn, type PredictOut, apiBase, hasBasicAuth } from "../lib/api";
+
+/** Simple badge color */
+const badgeColor: Record<string, string> = {
+  green: "#22c55e",
+  yellow: "#facc15",
+  red: "#ef4444",
+};
 
 const defaultInput: PredictIn = {
   adherence_pct: 90,
@@ -15,179 +24,213 @@ const defaultInput: PredictIn = {
 
 export default function PredictorPage() {
   const [form, setForm] = useState<PredictIn>(defaultInput);
-  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PredictOut | null>(null);
+
+  // Chart.js refs
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const chartRef = useRef<Chart | null>(null);
 
-  const onChange = (k: keyof PredictIn, v: string | number) => {
-    setForm((s) => ({ ...s, [k]: typeof s[k] === "number" ? Number(v) : String(v) }));
-  };
+  const canPredict = useMemo(() => !loading, [loading]);
 
-  const onSubmit = async (e: React.FormEvent) => {
+  function update<K extends keyof PredictIn>(key: K, val: PredictIn[K]) {
+    setForm((f) => ({ ...f, [key]: val }));
+  }
+
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
+    setLoading(true);
     setError(null);
     setResult(null);
     try {
       const out = await postPredict(form);
       setResult(out);
     } catch (err: any) {
-      setError(`Prediction failed: ${err?.response?.status || ""} ${err?.message || ""}`);
+      const msg =
+        err?.response?.data?.detail ||
+        err?.message ||
+        "Prediction failed. Please try again.";
+      setError(String(msg));
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
-  };
+  }
 
-  // Draw small viz when result changes
+  function reset() {
+    setForm(defaultInput);
+    setResult(null);
+    setError(null);
+    // clean chart
+    if (chartRef.current) {
+      chartRef.current.destroy();
+      chartRef.current = null;
+    }
+  }
+
+  // Draw/update canvas chart whenever result changes
   useEffect(() => {
-    const c = canvasRef.current;
-    if (!c || !result) return;
-    const ctx = c.getContext("2d")!;
-    const w = (c.width = 400);
-    const h = (c.height = 160);
+    if (!canvasRef.current) return;
+    if (chartRef.current) {
+      chartRef.current.destroy();
+      chartRef.current = null;
+    }
+    if (!result) return;
 
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "rgba(255,255,255,0.04)";
-    ctx.fillRect(0, 0, w, h);
+    const ctx = canvasRef.current.getContext("2d");
+    if (!ctx) return;
 
-    const bars = [
-      { label: "Δ Weight (kg)", value: result.delta_weight_kg },
-      { label: "Δ HbA1c (%)", value: result.delta_hba1c_pct },
-    ];
+    const weight = result.delta_weight_kg;
+    const hba1c = result.delta_hba1c_pct;
 
-    const cx = 40, barW = 260, top = 38, step = 56;
-
-    ctx.font = "12px ui-sans-serif, system-ui";
-    ctx.fillStyle = "rgba(230,235,255,0.9)";
-    ctx.strokeStyle = "rgba(160,180,220,0.35)";
-
-    bars.forEach((b, i) => {
-      const y = top + i * step;
-      // axis
-      ctx.beginPath();
-      ctx.moveTo(cx, y);
-      ctx.lineTo(cx + barW, y);
-      ctx.stroke();
-
-      // center = no change
-      const mid = cx + barW / 2;
-      ctx.beginPath();
-      ctx.moveTo(mid, y - 12);
-      ctx.lineTo(mid, y + 12);
-      ctx.stroke();
-
-      // bar
-      const scale = 30; // 1 unit = 30px
-      const px = Math.max(-barW/2, Math.min(barW/2, b.value * scale));
-      ctx.fillStyle = b.value < 0 ? "rgba(134,239,172,0.9)" : "rgba(255,167,102,0.9)";
-      const left = px < 0 ? mid + px : mid;
-      const width = Math.abs(px);
-      ctx.fillRect(left, y - 8, width, 16);
-
-      ctx.fillStyle = "rgba(230,235,255,0.9)";
-      ctx.fillText(`${b.label}: ${b.value}`, cx, y - 16);
+    chartRef.current = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: ["Δ Weight (kg)", "Δ HbA1c (%)"],
+        datasets: [
+          {
+            label: "Change",
+            data: [weight, hba1c],
+            backgroundColor: [
+              weight < 0 ? "#60a5fa" : "#f87171",
+              hba1c < 0 ? "#60a5fa" : "#f87171",
+            ],
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: { enabled: true },
+          title: {
+            display: true,
+            text: `Badge: ${result.badge.toUpperCase()}`,
+            color: badgeColor[result.badge] || "#93c5fd",
+          },
+        },
+        scales: {
+          x: { grid: { color: "rgba(148,163,184,0.2)" }, ticks: { color: "#e5eefc" } },
+          y: { grid: { color: "rgba(148,163,184,0.2)" }, ticks: { color: "#e5eefc" } },
+        },
+      },
     });
-
-    // badge
-    const badgeColor =
-      result.badge === "green" ? "rgba(134,239,172,0.95)" :
-      result.badge === "yellow" ? "rgba(255,223,99,0.95)" :
-      "rgba(255,129,129,0.95)";
-    ctx.fillStyle = badgeColor;
-    ctx.fillRect(w - 110, 18, 90, 26);
-    ctx.fillStyle = "#0b1220";
-    ctx.font = "700 13px ui-sans-serif, system-ui";
-    ctx.fillText(result.badge.toUpperCase(), w - 92, 36);
   }, [result]);
 
   return (
-    <>
-      <h1 style={{ marginBottom: 12 }}>Prediction</h1>
-      <div style={{ opacity: 0.8, fontSize: 14, marginBottom: 12 }}>
-        <strong>API_BASE:</strong> {apiBase} | <strong>Has Basic:</strong> {hasBasicAuth ? "yes" : "no"}
+    <div className="grid gap-6">
+      <div className="text-sm text-slate-400">
+        <strong>API_BASE:</strong> {apiBase || "(not set)"} &nbsp;|&nbsp; <strong>Has Basic:</strong>{" "}
+        {hasBasicAuth ? "yes" : "no"}
       </div>
 
-      {error && <div className="alert" style={{ marginBottom: 12 }}>{error}</div>}
+      <h1>Prediction</h1>
 
-      <div className="card" style={{ padding: 14, marginBottom: 18 }}>
-        <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
-          <div className="inputRow">
-            <label>adherence_pct</label>
-            <input className="input" type="number" value={form.adherence_pct} onChange={(e)=>onChange("adherence_pct", e.target.value)} />
-          </div>
+      {error && (
+        <div role="alert" style={{ background: "#7f1d1d", color: "#fecaca", padding: 12, borderRadius: 8 }}>
+          {error}
+        </div>
+      )}
 
-          <div className="inputRow">
-            <label>age_years</label>
-            <input className="input" type="number" value={form.age_years} onChange={(e)=>onChange("age_years", e.target.value)} />
-          </div>
+      <form onSubmit={onSubmit} className="grid md:grid-cols-2 gap-4" aria-label="Prediction form">
+        <LabeledInput
+          label="adherence_pct"
+          type="number"
+          value={form.adherence_pct}
+          onChange={(v) => update("adherence_pct", Number(v))}
+        />
+        <LabeledInput label="age_years" type="number" value={form.age_years} onChange={(v) => update("age_years", Number(v))} />
+        <LabeledInput label="bmi" type="number" value={form.bmi} onChange={(v) => update("bmi", Number(v))} />
 
-          <div className="inputRow">
-            <label>bmi</label>
-            <input className="input" type="number" step="0.1" value={form.bmi} onChange={(e)=>onChange("bmi", e.target.value)} />
-          </div>
+        <div className="grid gap-1">
+          <label>fmd_regimen_type</label>
+          <select
+            value={form.fmd_regimen_type}
+            onChange={(e) => update("fmd_regimen_type", e.target.value)}
+            className="p-2 rounded bg-slate-800 text-slate-100 border border-slate-700"
+          >
+            <option value="standard_fmd">standard_fmd</option>
+            <option value="prolon">prolon</option>
+            <option value="alternate_day">alternate_day</option>
+          </select>
+        </div>
 
-          <div className="inputRow">
-            <label>fmd_regimen_type</label>
-            <select className="input" value={form.fmd_regimen_type} onChange={(e)=>onChange("fmd_regimen_type", e.target.value)}>
-              <option value="standard_fmd">standard_fmd</option>
-              <option value="mini_fmd">mini_fmd</option>
-            </select>
-          </div>
+        <LabeledInput label="hba1c" type="number" step="0.1" value={form.hba1c} onChange={(v) => update("hba1c", Number(v))} />
+        <LabeledInput
+          label="meds_diabetes"
+          type="number"
+          value={form.meds_diabetes}
+          onChange={(v) => update("meds_diabetes", Number(v) as 0 | 1)}
+        />
+        <LabeledInput label="n_cycles" type="number" value={form.n_cycles} onChange={(v) => update("n_cycles", Number(v))} />
 
-          <div className="inputRow">
-            <label>hba1c</label>
-            <input className="input" type="number" step="0.1" value={form.hba1c} onChange={(e)=>onChange("hba1c", e.target.value)} />
-          </div>
+        <div className="grid gap-1">
+          <label>sex</label>
+          <select
+            value={form.sex}
+            onChange={(e) => update("sex", e.target.value as "M" | "F")}
+            className="p-2 rounded bg-slate-800 text-slate-100 border border-slate-700"
+          >
+            <option value="M">M</option>
+            <option value="F">F</option>
+          </select>
+        </div>
 
-          <div className="inputRow">
-            <label>meds_diabetes</label>
-            <input className="input" type="number" value={form.meds_diabetes} onChange={(e)=>onChange("meds_diabetes", e.target.value)} />
-          </div>
+        <LabeledInput label="weight_kg" type="number" value={form.weight_kg} onChange={(v) => update("weight_kg", Number(v))} />
+      </form>
 
-          <div className="inputRow">
-            <label>n_cycles</label>
-            <input className="input" type="number" value={form.n_cycles} onChange={(e)=>onChange("n_cycles", e.target.value)} />
-          </div>
-
-          <div className="inputRow">
-            <label>sex</label>
-            <select className="input" value={form.sex} onChange={(e)=>onChange("sex", e.target.value)}>
-              <option value="M">M</option>
-              <option value="F">F</option>
-            </select>
-          </div>
-
-          <div className="inputRow">
-            <label>weight_kg</label>
-            <input className="input" type="number" step="0.1" value={form.weight_kg} onChange={(e)=>onChange("weight_kg", e.target.value)} />
-          </div>
-
-          <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
-            <button className="button" type="submit" disabled={busy}>
-              {busy ? "Predicting…" : "Predict"}
-            </button>
-            <button className="button" type="button" style={{ background: "#c7d2fe" }}
-              onClick={() => setForm(defaultInput)} disabled={busy}>
-              Reset
-            </button>
-          </div>
-        </form>
+      <div className="flex gap-3">
+        <button
+          onClick={onSubmit as any}
+          disabled={!canPredict}
+          className="rounded bg-blue-500 px-4 py-2 text-white disabled:opacity-60"
+        >
+          {loading ? "Predicting..." : "Predict"}
+        </button>
+        <button onClick={reset} className="rounded bg-slate-700 px-4 py-2 text-white">
+          Reset
+        </button>
       </div>
 
       {result && (
-        <div className="card" style={{ padding: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span className="badge">badge: {result.badge}</span>
-              <span className="badge">Δ weight: {result.delta_weight_kg} kg</span>
-              <span className="badge">Δ HbA1c: {result.delta_hba1c_pct} %</span>
-            </div>
+        <section className="grid gap-4">
+          <div
+            className="inline-flex items-center gap-2 text-sm"
+            style={{ color: badgeColor[result.badge] || "#e5eefc" }}
+          >
+            <strong>badge:</strong> {result.badge} &nbsp; • &nbsp;
+            <strong>Δ weight (kg):</strong> {result.delta_weight_kg} &nbsp; • &nbsp;
+            <strong>Δ HbA1c (%):</strong> {result.delta_hba1c_pct}
           </div>
 
-          <canvas ref={canvasRef} style={{ width: "100%", maxWidth: 560, borderRadius: 10 }} />
-        </div>
+          <div style={{ background: "#0b1220", borderRadius: 12, padding: 12 }}>
+            <canvas ref={canvasRef} height={220} />
+          </div>
+        </section>
       )}
-    </>
+    </div>
+  );
+}
+
+function LabeledInput(props: {
+  label: string;
+  type?: string;
+  step?: number | string;
+  value: number | string;
+  onChange: (v: string) => void;
+}) {
+  const { label, type = "number", step, value, onChange } = props;
+  return (
+    <div className="grid gap-1">
+      <label htmlFor={label}>{label}</label>
+      <input
+        id={label}
+        type={type}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="p-2 rounded bg-slate-800 text-slate-100 border border-slate-700"
+      />
+    </div>
   );
 }
