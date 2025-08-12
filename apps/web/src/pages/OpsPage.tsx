@@ -1,7 +1,9 @@
 ﻿import React, { useEffect, useState } from "react";
-import api, { apiBase, hasBasicAuth } from "../lib/api";
+import { getFeatureColumns, apiBase, hasBasicAuth } from "../lib/api";
 
-type Features = Record<string, any>;
+// History is off because the backend doesn't expose a list endpoint.
+// Flip to true later if you add /predictions on your API.
+const SHOW_HISTORY = false;
 
 export default function OpsPage() {
   const [cols, setCols] = useState<string[]>([]);
@@ -11,58 +13,82 @@ export default function OpsPage() {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await api.get("/v1/features");
-        if (Array.isArray(data)) setCols(data as string[]);
-        else setCols(Object.keys(data as Features));
+        const list = await getFeatureColumns();
+        setCols(list);
       } catch (e: any) {
-        setErr(e?.message || "Failed to load features");
+        setErr(e?.message ?? "Failed to load feature columns.");
       } finally {
         setLoading(false);
       }
     })();
+
+    if (SHOW_HISTORY) {
+      // If/when you build an API list endpoint, fetch it here.
+      // Example:
+      // (async () => {
+      //   const r = await api.get("/v1/predictions?limit=50");
+      //   setPredictions(r.data);
+      // })();
+    }
   }, []);
 
   return (
     <div className="page">
-      <h1 className="page-title">Ops</h1>
-
-      <div className="muted mb-3">
-        <strong>API_BASE:</strong> {apiBase} &nbsp;|&nbsp; <strong>Has Basic:</strong>{" "}
-        {hasBasicAuth ? "yes" : "no"} &nbsp;|&nbsp; <strong>Using path:</strong>{" "}
-        features only
+      {/* Top info line */}
+      <div style={{ marginBottom: 12, color: "#9CA3AF", fontSize: 14 }}>
+        <b>API_BASE:</b> {apiBase} &nbsp; | &nbsp; <b>Has Basic:</b>{" "}
+        {hasBasicAuth ? "yes" : "no"} &nbsp; | &nbsp; <b>Using path:</b>{" "}
+        {SHOW_HISTORY ? "features + history" : "features only"}
       </div>
 
-      {err && (
-        <div role="alert" className="alert error">
-          {err}
+      {/* Red banner is suppressed while SHOW_HISTORY=false */}
+      {SHOW_HISTORY && (
+        <div
+          style={{
+            background: "#7f1d1d",
+            color: "#fff",
+            padding: 12,
+            borderRadius: 6,
+            marginBottom: 12,
+          }}
+        >
+          Predictions list endpoint not available on the backend.
         </div>
       )}
 
-      <section>
-        <h2>Feature columns</h2>
-        {loading ? (
-          <div className="muted">Loading…</div>
-        ) : (
-          <div className="table">
-            <div className="thead">
-              <div>#</div>
-              <div>Feature name</div>
-            </div>
-            <div className="tbody">
-              {cols.map((c, i) => (
-                <div className="tr" key={c}>
-                  <div>{i + 1}</div>
-                  <div>{c}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </section>
+      <h1>Ops</h1>
 
-      {/* Note: We intentionally removed the “Latest predictions” list
-          because the ML backend does not provide that endpoint.
-          When you add a logging API, we can re-enable it. */}
+      <h2 style={{ marginTop: 24 }}>Feature columns</h2>
+      {loading ? (
+        <div>Loading…</div>
+      ) : err ? (
+        <div style={{ color: "#f87171" }}>{err}</div>
+      ) : (
+        <table className="simple">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Feature name</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cols.map((f, i) => (
+              <tr key={f}>
+                <td>{i + 1}</td>
+                <td>{f}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* “Latest predictions” section hidden while history is off */}
+      {SHOW_HISTORY && (
+        <>
+          <h2 style={{ marginTop: 32 }}>Latest predictions</h2>
+          {/* render your predictions list here when the backend provides it */}
+        </>
+      )}
     </div>
   );
 }
